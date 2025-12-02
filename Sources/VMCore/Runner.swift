@@ -1,0 +1,342 @@
+import Foundation
+import Logging
+import Virtualization
+
+/// Errors that can occur during VM execution
+public enum RunnerError: LocalizedError, Sendable {
+    case configurationError(String)
+    case bootError(String)
+    case runtimeError(String)
+    case efiNotSupported
+    case alreadyRunning
+
+    public var errorDescription: String? {
+        switch self {
+        case .configurationError(let message):
+            return "VM configuration error: \(message)"
+        case .bootError(let message):
+            return "Boot error: \(message)"
+        case .runtimeError(let message):
+            return "Runtime error: \(message)"
+        case .efiNotSupported:
+            return "EFI boot is not supported on this system"
+        case .alreadyRunning:
+            return "VM is already running"
+        }
+    }
+}
+
+/// Delegate for handling VM state changes
+@MainActor
+public protocol RunnerDelegate: AnyObject {
+    func vmDidStop(error: Error?)
+    func vmDidStart()
+}
+
+/// Runs a Linux VM using Apple Virtualization.framework
+@MainActor
+public final class Runner: NSObject {
+    /// The virtual machine instance
+    public private(set) var virtualMachine: VZVirtualMachine?
+
+    /// VM configuration
+    public let vmConfig: VMConfiguration
+
+    /// VM manager for paths
+    public let vmManager: Manager
+
+    /// Delegate for state changes
+    public weak var delegate: RunnerDelegate?
+
+    /// Guest agent vsock device (if enabled)
+    public private(set) var guestAgentSocketDevice: VZVirtioSocketDevice?
+
+    /// Logger for this runner
+    private let logger: Logger
+
+    /// Whether the VM is running
+    public var isRunning: Bool {
+        virtualMachine?.state == .running
+    }
+
+    public init(config: VMConfiguration, manager: Manager = .shared, logger: Logger? = nil) {
+        self.vmConfig = config
+        self.vmManager = manager
+        self.logger =
+            logger ?? VMLogger.makeLogger(label: "runner", vmName: config.name, manager: manager)
+        super.init()
+    }
+
+    /// Creates the VZ configuration for the VM
+    nonisolated public func createVZConfiguration(
+        attachISO: Bool = false,
+        serialInput: FileHandle,
+        serialOutput: FileHandle
+    ) throws -> VZVirtualMachineConfiguration {
+        logger.debug("Creating VZ configuration", metadata: ["vm": "\(vmConfig.name)"])
+
+        let config = VZVirtualMachineConfiguration()
+
+        // CPU and memory
+        config.cpuCount = vmConfig.cpuCount
+        config.memorySize = vmConfig.memorySize
+        logger.debug(
+            "CPU and memory configured",
+            metadata: [
+                "cpus": "\(vmConfig.cpuCount)",
+                "memory_bytes": "\(vmConfig.memorySize)",
+            ]
+        )
+
+        // Boot loader - EFI for standard Linux boot
+        let efiBootLoader = VZEFIBootLoader()
+        let nvramPath = vmManager.nvramPath(for: vmConfig.name)
+
+        if FileManager.default.fileExists(atPath: nvramPath.path) {
+            logger.debug("Using existing NVRAM", metadata: ["path": "\(nvramPath.path)"])
+            efiBootLoader.variableStore = VZEFIVariableStore(url: nvramPath)
+        } else {
+            logger.debug("Creating new NVRAM", metadata: ["path": "\(nvramPath.path)"])
+            // Create new EFI variable store
+            efiBootLoader.variableStore = try VZEFIVariableStore(creatingVariableStoreAt: nvramPath)
+        }
+        config.bootLoader = efiBootLoader
+
+        // Platform configuration
+        let platform = VZGenericPlatformConfiguration()
+        config.platform = platform
+
+        // Storage devices
+        var storageDevices: [VZStorageDeviceConfiguration] = []
+
+        // Main disk
+        let diskPath = vmManager.diskPath(for: vmConfig.name)
+        if FileManager.default.fileExists(atPath: diskPath.path) {
+            logger.debug("Attaching main disk", metadata: ["path": "\(diskPath.path)"])
+            let diskAttachment = try VZDiskImageStorageDeviceAttachment(
+                url: diskPath,
+                readOnly: false
+            )
+            let disk = VZVirtioBlockDeviceConfiguration(attachment: diskAttachment)
+            storageDevices.append(disk)
+        }
+
+        // ISO attachment (for installation)
+        if attachISO, let isoPathString = vmConfig.isoPath {
+            let isoURL = URL(fileURLWithPath: (isoPathString as NSString).expandingTildeInPath)
+            if FileManager.default.fileExists(atPath: isoURL.path) {
+                logger.debug("Attaching ISO", metadata: ["path": "\(isoURL.path)"])
+                let isoAttachment = try VZDiskImageStorageDeviceAttachment(
+                    url: isoURL,
+                    readOnly: true
+                )
+                let iso = VZUSBMassStorageDeviceConfiguration(attachment: isoAttachment)
+                storageDevices.append(iso)
+            }
+        }
+
+        // Cloud-init ISO (always attached for automatic guest agent configuration)
+        let cloudInitPath = vmManager.cloudInitISOPath(for: vmConfig.name)
+        if FileManager.default.fileExists(atPath: cloudInitPath.path) {
+            logger.debug("Attaching cloud-init ISO", metadata: ["path": "\(cloudInitPath.path)"])
+            let cloudInitAttachment = try VZDiskImageStorageDeviceAttachment(
+                url: cloudInitPath,
+                readOnly: true
+            )
+            let cloudInitISO = VZUSBMassStorageDeviceConfiguration(attachment: cloudInitAttachment)
+            storageDevices.append(cloudInitISO)
+        }
+
+        config.storageDevices = storageDevices
+        logger.debug(
+            "Storage devices configured", metadata: ["count": "\(storageDevices.count)"])
+
+        // Network - NAT
+        let networkDevice = VZVirtioNetworkDeviceConfiguration()
+        networkDevice.attachment = VZNATNetworkDeviceAttachment()
+
+        // Set MAC address
+        if let macAddress = VZMACAddress(string: vmConfig.macAddress) {
+            networkDevice.macAddress = macAddress
+            logger.debug(
+                "Using configured MAC address", metadata: ["mac": "\(vmConfig.macAddress)"])
+        } else {
+            networkDevice.macAddress = VZMACAddress.randomLocallyAdministered()
+            logger.debug(
+                "Using random MAC address",
+                metadata: ["mac": "\(networkDevice.macAddress.string)"]
+            )
+        }
+        config.networkDevices = [networkDevice]
+
+        // Serial console using virtio console device
+        let serialConfig = VZVirtioConsoleDeviceSerialPortConfiguration()
+        let serialAttachment = VZFileHandleSerialPortAttachment(
+            fileHandleForReading: serialInput,
+            fileHandleForWriting: serialOutput
+        )
+        serialConfig.attachment = serialAttachment
+
+        config.serialPorts = [serialConfig]
+        logger.debug("Serial console configured")
+
+        // Virtio socket for guest agent communication
+        let socketDevice = VZVirtioSocketDeviceConfiguration()
+        config.socketDevices = [socketDevice]
+        logger.debug("Virtio socket configured for guest agent")
+
+        // Entropy device (required for Linux)
+        config.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
+
+        // Memory balloon for dynamic memory
+        config.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
+
+        // Keyboard and pointer for potential future use
+        config.keyboards = [VZUSBKeyboardConfiguration()]
+        config.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
+
+        // Share host home directory with guest via virtiofs
+        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+        let shareConfig = VZVirtioFileSystemDeviceConfiguration(tag: "hostHome")
+        shareConfig.share = VZSingleDirectoryShare(
+            directory: VZSharedDirectory(url: homeDirectory, readOnly: false)
+        )
+        config.directorySharingDevices = [shareConfig]
+        logger.debug("Host home directory sharing configured", metadata: ["path": "\(homeDirectory.path)"])
+
+        // Validate
+        try config.validate()
+        logger.debug("VZ configuration validated successfully")
+
+        return config
+    }
+
+    /// Starts the VM
+    public func start(
+        attachISO: Bool = false,
+        serialInput: FileHandle,
+        serialOutput: FileHandle
+    ) async throws {
+        logger.info(
+            "Starting VM", metadata: ["vm": "\(vmConfig.name)", "attach_iso": "\(attachISO)"])
+
+        guard virtualMachine == nil || virtualMachine?.state == .stopped else {
+            logger.error("VM is already running")
+            throw RunnerError.alreadyRunning
+        }
+
+        let config = try createVZConfiguration(
+            attachISO: attachISO,
+            serialInput: serialInput,
+            serialOutput: serialOutput
+        )
+
+        logger.debug("Creating virtual machine instance")
+        let vm = VZVirtualMachine(configuration: config)
+        vm.delegate = self
+        self.virtualMachine = vm
+
+        logger.debug("Calling VZVirtualMachine.start()")
+        try await vm.start()
+        logger.info("VM started successfully")
+
+        // Capture the socket device for guest agent communication after VM starts
+        if !vm.socketDevices.isEmpty {
+            self.guestAgentSocketDevice = vm.socketDevices[0] as? VZVirtioSocketDevice
+            logger.debug("Guest agent socket device captured")
+        }
+
+        delegate?.vmDidStart()
+    }
+
+    /// Stops the VM gracefully
+    public func stop() async throws {
+        logger.info("Stopping VM gracefully")
+
+        guard let vm = virtualMachine, vm.state == .running else {
+            logger.debug("VM not running, nothing to stop")
+            return
+        }
+
+        if vm.canRequestStop {
+            logger.debug("Requesting graceful stop")
+            try vm.requestStop()
+            // Wait for the VM to stop
+            try await Task.sleep(nanoseconds: 2_000_000_000)  // 2 seconds
+
+            // If still running, force stop
+            if vm.state == .running {
+                logger.warning("VM did not stop gracefully, forcing stop")
+                try await forceStop()
+            }
+        } else {
+            logger.debug("Graceful stop not available, forcing stop")
+            try await forceStop()
+        }
+    }
+
+    /// Force stops the VM
+    public func forceStop() async throws {
+        logger.info("Force stopping VM")
+        guard let vm = virtualMachine else {
+            logger.debug("No VM instance to stop")
+            return
+        }
+
+        try await vm.stop()
+        logger.info("VM force stopped")
+    }
+
+    /// Pauses the VM
+    public func pause() async throws {
+        logger.info("Pausing VM")
+        guard let vm = virtualMachine, vm.state == .running else {
+            logger.debug("VM not running, cannot pause")
+            return
+        }
+
+        try await vm.pause()
+        logger.info("VM paused")
+    }
+
+    /// Resumes a paused VM
+    public func resume() async throws {
+        logger.info("Resuming VM")
+        guard let vm = virtualMachine, vm.state == .paused else {
+            logger.debug("VM not paused, cannot resume")
+            return
+        }
+
+        try await vm.resume()
+        logger.info("VM resumed")
+    }
+
+    /// Waits for the VM to stop
+    public func waitUntilStopped() async {
+        logger.debug("Waiting for VM to stop")
+        while virtualMachine?.state == .running || virtualMachine?.state == .starting {
+            try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+        }
+        logger.debug("VM has stopped")
+    }
+}
+
+// MARK: - VZVirtualMachineDelegate
+
+extension Runner: VZVirtualMachineDelegate {
+    nonisolated public func virtualMachine(
+        _ virtualMachine: VZVirtualMachine, didStopWithError error: any Error
+    ) {
+        logger.error("VM stopped with error", metadata: ["error": "\(error)"])
+        Task { @MainActor in
+            delegate?.vmDidStop(error: error)
+        }
+    }
+
+    nonisolated public func guestDidStop(_ virtualMachine: VZVirtualMachine) {
+        logger.info("Guest initiated shutdown")
+        Task { @MainActor in
+            delegate?.vmDidStop(error: nil)
+        }
+    }
+}

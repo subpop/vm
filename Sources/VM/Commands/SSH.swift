@@ -12,9 +12,12 @@ struct SSH: AsyncParsableCommand {
             The VM must be running and have network connectivity. If the VM was just
             started, wait a few seconds for the network to initialize.
 
+            Agent forwarding is enabled by default (-A). Use --no-forward-agent to disable.
+
             Examples:
               vm ssh ubuntu
               vm ssh ubuntu --user root
+              vm ssh ubuntu --no-forward-agent
               vm ssh ubuntu -- -v -L 8080:localhost:80
             """
     )
@@ -27,6 +30,9 @@ struct SSH: AsyncParsableCommand {
 
     @Option(name: .shortAndLong, help: "SSH port")
     var port: Int?
+
+    @Flag(name: .customLong("no-forward-agent"), help: "Disable SSH agent forwarding")
+    var noForwardAgent: Bool = false
 
     @Argument(parsing: .captureForPassthrough, help: "Additional arguments to pass to ssh")
     var sshArgs: [String] = []
@@ -75,6 +81,11 @@ struct SSH: AsyncParsableCommand {
 
         // Build ssh command arguments
         var args: [String] = ["ssh"]
+
+        // Enable agent forwarding by default
+        if !noForwardAgent {
+            args.append("-A")
+        }
 
         if let user = user {
             args.append(contentsOf: ["-l", user])

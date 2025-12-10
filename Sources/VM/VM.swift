@@ -34,6 +34,7 @@ struct VM: AsyncParsableCommand {
             RunDaemon.self,
             List.self,
             Info.self,
+            Resize.self,
             Delete.self,
         ],
         defaultSubcommand: List.self

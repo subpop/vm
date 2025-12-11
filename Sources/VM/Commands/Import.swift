@@ -160,6 +160,9 @@ struct Import: AsyncParsableCommand {
         let cloudInitISOGenerator = CloudInitISOGenerator(configuration: cloudInitConfiguation)
         try await cloudInitISOGenerator.generateISO(at: cloudInitPath)
 
+        // Generate SSH config for direct SSH access
+        try vmManager.writeSSHConfig(for: name)
+
         // Save configuration
         try vmManager.saveConfiguration(config)
 

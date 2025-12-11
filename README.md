@@ -124,6 +124,7 @@ VMs are stored in `~/.vm/` with each VM in its own directory:
     ├── disk.img         # Disk image
     ├── nvram.bin        # EFI variable store
     ├── cloud-init.iso   # Cloud-init configuration
+    ├── ssh_config       # SSH config for this VM
     ├── console.sock     # Console socket (when running)
     └── vm.pid           # PID file (when running)
 ```
@@ -150,6 +151,24 @@ Or with options:
 vm ssh ubuntu --user root
 vm ssh ubuntu -- -v -L 8080:localhost:80
 ```
+
+### SSH Config Integration
+
+Each VM includes an `ssh_config` file that allows you to SSH using just the VM name. To enable this, add the following line to the **top** of your `~/.ssh/config`:
+
+```
+Include ~/.vm/*/ssh_config
+```
+
+Then you can SSH directly using the VM name as the host:
+
+```bash
+ssh ubuntu
+scp file.txt ubuntu:~/
+rsync -av ./project ubuntu:~/project
+```
+
+This works by using a ProxyCommand that resolves the VM's IP address dynamically via `vm ip`.
 
 ## Console
 

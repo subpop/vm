@@ -112,6 +112,31 @@ public final class Manager: Sendable {
         vmDirectory(for: name).appendingPathComponent("vm.log")
     }
 
+    /// Returns the SSH config file path for a VM
+    public func sshConfigPath(for name: String) -> URL {
+        vmDirectory(for: name).appendingPathComponent("ssh_config")
+    }
+
+    /// Writes the SSH config file for a VM
+    ///
+    /// This creates an ssh_config file that can be included in ~/.ssh/config
+    /// to allow direct SSH access using the VM name as the host.
+    public func writeSSHConfig(for name: String) throws {
+        let username = ProcessInfo.processInfo.userName
+        let sshConfig = """
+            Host \(name)
+                User \(username)
+                ForwardAgent yes
+                StrictHostKeyChecking no
+                UserKnownHostsFile /dev/null
+                ProxyCommand nc $(vm ip %h) %p
+
+            """
+
+        let path = sshConfigPath(for: name)
+        try sshConfig.write(to: path, atomically: true, encoding: .utf8)
+    }
+
     /// Validates a VM name
     public func validateVMName(_ name: String) throws {
         let validCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))

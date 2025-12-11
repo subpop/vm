@@ -115,6 +115,9 @@ struct Create: AsyncParsableCommand {
         let cloudInitISOGenerator = CloudInitISOGenerator(configuration: cloudInitConfiguation)
         try await cloudInitISOGenerator.generateISO(at: cloudInitPath)
 
+        // Generate SSH config for direct SSH access
+        try vmManager.writeSSHConfig(for: name)
+
         print("✓ VM '\(name)' created successfully")
         print("  Location: \(vmManager.vmDirectory(for: name).path)")
 

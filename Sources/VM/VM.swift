@@ -31,6 +31,7 @@ struct VM: AsyncParsableCommand {
             Stop.self,
             Attach.self,
             SSH.self,
+            IP.self,
             RunDaemon.self,
             List.self,
             Info.self,

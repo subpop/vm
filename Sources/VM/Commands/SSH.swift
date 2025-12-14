@@ -19,7 +19,8 @@ struct SSH: AsyncParsableCommand {
               vm ssh ubuntu --user root
               vm ssh ubuntu --no-forward-agent
               vm ssh ubuntu -- -v -L 8080:localhost:80
-            """
+            """,
+        aliases: ["shell", "login", "connect"]
     )
 
     @Argument(help: "Name of the virtual machine")

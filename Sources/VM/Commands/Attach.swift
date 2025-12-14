@@ -12,7 +12,8 @@ struct Attach: AsyncParsableCommand {
 
             Examples:
               vm attach ubuntu
-            """
+            """,
+        aliases: ["console"]
     )
 
     @Argument(help: "Name of the virtual machine to attach to")

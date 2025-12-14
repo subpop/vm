@@ -322,6 +322,7 @@ extension CloudInitConfiguration {
         sshKeys: [String] = []
     ) throws -> CloudInitConfiguration {
         let metadata = Metadata(localHostname: hostname, instanceID: instanceID)
+        let homeDir = "/Users/\(username)"
         let userdata = CloudConfig(
             users: [CloudConfig.User(name: username, sshAuthorizedKeys: sshKeys)],
             hostname: hostname,
@@ -349,7 +350,7 @@ extension CloudInitConfiguration {
                 fi
                 """,
                 // Create mount point and mount host home directory
-                "mkdir -p /mnt/host && mount -a",
+                "mkdir -p \(homeDir) && mount -a",
             ],
             writeFiles: [
                 // SELinux policy to allow qemu-ga to use vsock (ignored on non-SELinux systems)
@@ -388,7 +389,7 @@ extension CloudInitConfiguration {
                     path: "/etc/systemd/system/qemu-guest-agent.service"),
                 // fstab entry to mount host home directory via virtiofs
                 CloudConfig.FileInfo(
-                    content: "hostHome /mnt/host virtiofs rw,nofail 0 0\n",
+                    content: "hostHome \(homeDir) virtiofs rw,nofail 0 0\n",
                     path: "/etc/fstab",
                     append: true),
             ])

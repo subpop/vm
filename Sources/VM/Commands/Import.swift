@@ -14,13 +14,14 @@ struct Import: AsyncParsableCommand {
             Use --size with --copy to resize the disk during import. The new size
             must be larger than or equal to the original disk size.
 
-            The disk image should be a raw disk image. QCOW2 and other formats
-            are not supported.
+            Both raw and QCOW2 disk images are supported. QCOW2 images are
+            automatically converted to raw format during import (requires qemu-img).
+            Copy mode is automatically enabled for QCOW2 images.
 
             Examples:
               vm import ubuntu --disk ~/VMs/ubuntu.img
               vm import debian --disk debian.raw --copy
-              vm import arch --disk arch.img --cpus 4 --memory 8G
+              vm import arch --disk arch.qcow2 --cpus 4 --memory 8G
               vm import ubuntu --disk ubuntu.img --copy --size 128G
             """
     )
@@ -86,6 +87,15 @@ struct Import: AsyncParsableCommand {
         // Validate disk image exists
         let sourceURL = try diskManager.validateFileExists(at: disk)
 
+        // Detect if source is QCOW2
+        let isQcow2 = diskManager.isQcow2Image(at: sourceURL)
+
+        // Auto-enable copy mode for QCOW2 (cannot use QCOW2 directly with Virtualization.framework)
+        let effectiveCopy = copy || isQcow2
+        if isQcow2 && !copy {
+            print("Note: QCOW2 image detected, automatically enabling copy mode for conversion")
+        }
+
         // Get disk size
         let diskSize = try diskManager.getDiskSize(at: sourceURL)
 
@@ -102,13 +112,14 @@ struct Import: AsyncParsableCommand {
 
         print("Importing disk image as VM '\(name)'...")
         print("  Source: \(sourceURL.path)")
+        print("  Format: \(isQcow2 ? "QCOW2" : "Raw")")
         print("  Source Size: \(diskManager.formatSize(diskSize))")
         if size != nil {
             print("  Target Size: \(diskManager.formatSize(targetSize))")
         }
         print("  CPUs: \(cpus)")
         print("  Memory: \(diskManager.formatSize(memoryBytes))")
-        print("  Mode: \(copy ? "Copy" : "In-place")")
+        print("  Mode: \(effectiveCopy ? (isQcow2 ? "Convert" : "Copy") : "In-place")")
 
         // Create configuration with target size
         var config = VMConfiguration.create(
@@ -126,11 +137,18 @@ struct Import: AsyncParsableCommand {
         let vmDir = vmManager.vmDirectory(for: name)
         try FileManager.default.createDirectory(at: vmDir, withIntermediateDirectories: true)
 
-        if copy {
-            // Copy disk image to VM directory
+        if effectiveCopy {
             let destPath = vmManager.diskPath(for: name)
-            print("Copying disk image...")
-            try diskManager.copyDiskImage(from: sourceURL, to: destPath)
+
+            if isQcow2 {
+                // Convert QCOW2 to raw format
+                print("Converting QCOW2 to raw format...")
+                try await diskManager.convertQcow2ToRaw(from: sourceURL, to: destPath)
+            } else {
+                // Copy raw disk image to VM directory
+                print("Copying disk image...")
+                try diskManager.copyDiskImage(from: sourceURL, to: destPath)
+            }
 
             // Resize if requested
             if targetSize > diskSize {

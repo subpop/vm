@@ -8,6 +8,7 @@ public enum DiskError: LocalizedError, Sendable {
     case invalidSize(String)
     case copyFailed(String)
     case resizeFailed(String)
+    case conversionFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -23,6 +24,8 @@ public enum DiskError: LocalizedError, Sendable {
             return "Failed to copy disk: \(message)"
         case .resizeFailed(let message):
             return "Failed to resize disk: \(message)"
+        case .conversionFailed(let message):
+            return "Failed to convert disk image: \(message)"
         }
     }
 }
@@ -169,7 +172,9 @@ public final class DiskManager: Sendable {
 
         // Validate new size is not smaller (we don't support shrinking)
         guard newSize >= currentSize else {
-            throw DiskError.resizeFailed("New size (\(formatSize(newSize))) must be >= current size (\(formatSize(currentSize)))")
+            throw DiskError.resizeFailed(
+                "New size (\(formatSize(newSize))) must be >= current size (\(formatSize(currentSize)))"
+            )
         }
 
         // If sizes are the same, nothing to do
@@ -208,5 +213,132 @@ public final class DiskManager: Sendable {
         }
 
         return url
+    }
+
+    // MARK: - QCOW2 Support
+
+    /// Checks if a file is a QCOW2 disk image by examining its magic bytes.
+    ///
+    /// QCOW2 files start with the magic bytes: 0x51, 0x46, 0x49, 0xFB ("QFI\xFB")
+    ///
+    /// - Parameter path: Path to the file to check
+    /// - Returns: `true` if the file is a QCOW2 image, `false` otherwise
+    public func isQcow2Image(at path: URL) -> Bool {
+        guard let fileHandle = try? FileHandle(forReadingFrom: path) else {
+            return false
+        }
+        defer { try? fileHandle.close() }
+
+        // QCOW2 magic bytes: 0x51 0x46 0x49 0xFB ("QFI\xFB")
+        let qcow2Magic: [UInt8] = [0x51, 0x46, 0x49, 0xFB]
+
+        guard let data = try? fileHandle.read(upToCount: 4),
+            data.count == 4
+        else {
+            return false
+        }
+
+        return data.elementsEqual(qcow2Magic)
+    }
+
+    /// Converts a QCOW2 disk image to raw format using qemu-img.
+    ///
+    /// - Parameters:
+    ///   - source: Path to the source QCOW2 image
+    ///   - destination: Path where the raw image will be created
+    /// - Throws: `DiskError.conversionFailed` if conversion fails
+    public func convertQcow2ToRaw(from source: URL, to destination: URL) async throws {
+        guard fileManager.fileExists(atPath: source.path) else {
+            throw DiskError.fileNotFound(source.path)
+        }
+
+        if fileManager.fileExists(atPath: destination.path) {
+            throw DiskError.diskAlreadyExists(destination.path)
+        }
+
+        // Create parent directory if needed
+        let parentDir = destination.deletingLastPathComponent()
+        if !fileManager.fileExists(atPath: parentDir.path) {
+            try fileManager.createDirectory(at: parentDir, withIntermediateDirectories: true)
+        }
+
+        // Find qemu-img executable
+        let qemuImgPath = findQemuImg()
+        guard let executablePath = qemuImgPath else {
+            throw DiskError.conversionFailed(
+                "qemu-img not found. Please install qemu for conversion support.")
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = [
+            "convert",
+            "-f", "qcow2",
+            "-O", "raw",
+            source.path,
+            destination.path,
+        ]
+
+        let errorPipe = Pipe()
+        process.standardOutput = nil
+        process.standardError = errorPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            throw DiskError.conversionFailed(error.localizedDescription)
+        }
+
+        guard process.terminationStatus == 0 else {
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorString = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+            throw DiskError.conversionFailed(
+                errorString.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
+    /// Searches for qemu-img in common locations.
+    private func findQemuImg() -> String? {
+        let searchPaths = [
+            "/opt/homebrew/bin/qemu-img",  // Homebrew
+            "/opt/local/bin/qemu-img",  // MacPorts
+            "/usr/local/bin/qemu-img",  // Local install
+            "/usr/bin/qemu-img",  // System path
+        ]
+
+        for path in searchPaths {
+            if fileManager.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+
+        // Try to find via PATH using `which`
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        process.arguments = ["qemu-img"]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = nil
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            if process.terminationStatus == 0 {
+                let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                if let path = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                    !path.isEmpty
+                {
+                    return path
+                }
+            }
+        } catch {
+            // Fall through to return nil
+        }
+
+        return nil
     }
 }

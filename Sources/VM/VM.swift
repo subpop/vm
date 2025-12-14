@@ -38,6 +38,7 @@ struct VM: AsyncParsableCommand {
             Edit.self,
             Resize.self,
             Delete.self,
+            RegenCloudInitISO.self,
         ],
         defaultSubcommand: List.self
     )

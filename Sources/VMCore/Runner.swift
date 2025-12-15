@@ -115,7 +115,9 @@ public final class Runner: NSObject {
             logger.debug("Attaching main disk", metadata: ["path": "\(diskPath.path)"])
             let diskAttachment = try VZDiskImageStorageDeviceAttachment(
                 url: diskPath,
-                readOnly: false
+                readOnly: false,
+                cachingMode: .automatic,
+                synchronizationMode: .full
             )
             let disk = VZVirtioBlockDeviceConfiguration(attachment: diskAttachment)
             storageDevices.append(disk)
@@ -202,7 +204,8 @@ public final class Runner: NSObject {
             directory: VZSharedDirectory(url: homeDirectory, readOnly: false)
         )
         config.directorySharingDevices = [shareConfig]
-        logger.debug("Host home directory sharing configured", metadata: ["path": "\(homeDirectory.path)"])
+        logger.debug(
+            "Host home directory sharing configured", metadata: ["path": "\(homeDirectory.path)"])
 
         // Validate
         try config.validate()
@@ -261,12 +264,26 @@ public final class Runner: NSObject {
         if vm.canRequestStop {
             logger.debug("Requesting graceful stop")
             try vm.requestStop()
-            // Wait for the VM to stop
-            try await Task.sleep(nanoseconds: 2_000_000_000)  // 2 seconds
 
-            // If still running, force stop
+            // Wait for the VM to stop gracefully. Linux systems typically need 30-90 seconds
+            // to properly shut down services, sync filesystems (especially BTRFS which needs
+            // to commit pending transactions), and unmount cleanly.
+            let shutdownTimeoutSeconds = 60
+            let checkIntervalNs: UInt64 = 500_000_000  // 500ms
+            let maxChecks = shutdownTimeoutSeconds * 2
+
+            for _ in 0..<maxChecks {
+                try await Task.sleep(nanoseconds: checkIntervalNs)
+                if vm.state != .running {
+                    logger.debug("VM stopped gracefully")
+                    return
+                }
+            }
+
+            // If still running after timeout, force stop
             if vm.state == .running {
-                logger.warning("VM did not stop gracefully, forcing stop")
+                logger.warning(
+                    "VM did not stop gracefully after \(shutdownTimeoutSeconds)s, forcing stop")
                 try await forceStop()
             }
         } else {

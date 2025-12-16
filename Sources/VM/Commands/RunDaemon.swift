@@ -193,25 +193,6 @@ struct RunDaemon: AsyncParsableCommand {
     }
 }
 
-/// Thread-safe exit flag
-private final class ExitFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _shouldExit = false
-
-    var shouldExit: Bool {
-        get {
-            lock.lock()
-            defer { lock.unlock() }
-            return _shouldExit
-        }
-        set {
-            lock.lock()
-            defer { lock.unlock() }
-            _shouldExit = newValue
-        }
-    }
-}
-
 /// Attempts to query network information from the guest agent
 /// Returns the interfaces if successful, nil otherwise
 @MainActor

@@ -15,25 +15,6 @@ public enum ConsoleConnectionError: Error, LocalizedError, Sendable {
     }
 }
 
-/// Thread-safe flag for signaling exit across concurrency boundaries
-private final class ExitFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _shouldExit = false
-
-    var shouldExit: Bool {
-        get {
-            lock.lock()
-            defer { lock.unlock() }
-            return _shouldExit
-        }
-        set {
-            lock.lock()
-            defer { lock.unlock() }
-            _shouldExit = newValue
-        }
-    }
-}
-
 /// Manages a connection to a running VM's console via Unix socket
 /// Uses the Socket class for Unix domain socket operations
 @MainActor

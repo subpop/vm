@@ -87,6 +87,7 @@ vm start ubuntu
 | `vm attach <name>` | Attach to a running VM's console |
 | `vm ssh <name>` | SSH into a running VM |
 | `vm info <name>` | Show detailed VM information |
+| `vm rescue <name>` | Boot into rescue environment |
 | `vm delete <name>` | Delete a VM and its files |
 
 ### Create Options
@@ -112,6 +113,18 @@ vm import myvm --disk ~/existing.img --copy
 # Copy and resize
 vm import myvm --disk ~/existing.img --copy --size 128G
 ```
+
+### Rescue Mode
+
+Boot a VM into a rescue environment for recovery operations:
+
+```bash
+vm rescue ubuntu
+```
+
+This boots a Fedora Cloud rescue system with the target VM's disk attached as `/dev/vdb`. Useful for filesystem repairs, password resets, or data recovery.
+
+On first run, a rescue image is downloaded and set up (~500MB download). The `rescue` use is logged in automatically, however both the `rescue` and `root` user have their passwords set to `rescue`.
 
 ## VM Storage
 

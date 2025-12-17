@@ -33,7 +33,7 @@ struct Stop: AsyncParsableCommand {
         
         // Get running PID
         guard let pid = vmManager.getRunningPID(for: name) else {
-            print("VM '\(name)' is not running.")
+            print("VM '\(name)' is not running")
             return
         }
         
@@ -48,13 +48,13 @@ struct Stop: AsyncParsableCommand {
                 // Clean up PID file
                 try? vmManager.clearRuntimeInfo(for: name)
                 
-                print("✓ VM '\(name)' force stopped.")
+                print("✓ VM '\(name)' force stopped")
             } else {
                 let errno_value = errno
                 if errno_value == ESRCH {
                     // Process doesn't exist, clean up
                     try? vmManager.clearRuntimeInfo(for: name)
-                    print("VM '\(name)' was not running (stale PID file cleaned up).")
+                    print("VM '\(name)' was not running (stale PID file cleaned up)")
                 } else {
                     throw RunnerError.runtimeError("Failed to kill process: \(String(cString: strerror(errno_value)))")
                 }
@@ -75,7 +75,7 @@ struct Stop: AsyncParsableCommand {
                     if kill(pid, 0) != 0 {
                         // Process terminated
                         try? vmManager.clearRuntimeInfo(for: name)
-                        print("✓ VM '\(name)' stopped gracefully.")
+                        print("✓ VM '\(name)' stopped gracefully")
                         return
                     }
                     
@@ -90,7 +90,7 @@ struct Stop: AsyncParsableCommand {
                 if errno_value == ESRCH {
                     // Process doesn't exist, clean up
                     try? vmManager.clearRuntimeInfo(for: name)
-                    print("VM '\(name)' was not running (stale PID file cleaned up).")
+                    print("VM '\(name)' was not running (stale PID file cleaned up)")
                 } else {
                     throw RunnerError.runtimeError("Failed to send signal: \(String(cString: strerror(errno_value)))")
                 }

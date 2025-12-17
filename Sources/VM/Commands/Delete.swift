@@ -51,18 +51,18 @@ struct Delete: AsyncParsableCommand {
             print("  Disk:     \(diskManager.formatSize(config.diskSize))")
             print("  Total:    \(diskManager.formatSize(totalSize))")
             print("")
-            print("This action cannot be undone.")
+            print("This action cannot be undone")
             print("Type '\(name)' to confirm deletion: ", terminator: "")
             
             guard let input = readLine(), input == name else {
-                print("Deletion cancelled.")
+                print("Deletion cancelled")
                 return
             }
         }
         
         print("Deleting VM '\(name)'...")
         try vmManager.deleteVM(name)
-        print("✓ VM '\(name)' deleted successfully.")
+        print("✓ VM '\(name)' deleted successfully")
     }
     
     /// Calculate directory size synchronously to avoid async context issues

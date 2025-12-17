@@ -46,7 +46,9 @@ struct Attach: AsyncParsableCommand {
         print("Press Ctrl-] to detach from console\n")
 
         // Connect to the console
-        let connection = ConsoleConnection(vmName: name, socketPath: socketPath)
+        let connection = ConsoleConnection(vmName: name, socketPath: socketPath) { message in
+            print(message)
+        }
         try await connection.connect()
         try await connection.run()
     }

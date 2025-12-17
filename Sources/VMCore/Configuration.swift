@@ -156,22 +156,37 @@ public struct VMNetworkInfo: Codable, Sendable {
 public struct CloudConfig: Codable, Sendable {
     public struct User: Codable, Sendable {
         public let name: String
+        public let groups: String?
         public let sudo: [String]
         public let shell: String
-        public let sshAuthorizedKeys: [String]
+        public let sshAuthorizedKeys: [String]?
+        public let lockPasswd: Bool?
+        public let passwd: String?
 
-        public init(name: String, sshAuthorizedKeys: [String] = []) {
+        public init(
+            name: String,
+            groups: String? = nil,
+            sshAuthorizedKeys: [String] = [],
+            lockPasswd: Bool? = nil,
+            passwd: String? = nil
+        ) {
             self.name = name
+            self.groups = groups
             self.sudo = ["ALL=(ALL) NOPASSWD:ALL"]
             self.shell = "/bin/bash"
-            self.sshAuthorizedKeys = sshAuthorizedKeys
+            self.sshAuthorizedKeys = sshAuthorizedKeys.isEmpty ? nil : sshAuthorizedKeys
+            self.lockPasswd = lockPasswd
+            self.passwd = passwd
         }
 
         public enum CodingKeys: String, CodingKey {
             case name
+            case groups
             case sudo
             case shell
             case sshAuthorizedKeys = "ssh_authorized_keys"
+            case lockPasswd = "lock_passwd"
+            case passwd
         }
     }
 
@@ -184,8 +199,33 @@ public struct CloudConfig: Codable, Sendable {
         public var append: Bool = false
     }
 
+    public struct Chpasswd: Codable, Sendable {
+        public let expire: Bool
+        public let users: [UserPassword]
+
+        public struct UserPassword: Codable, Sendable {
+            public let name: String
+            public let password: String
+            public let type: String
+
+            public init(name: String, password: String, type: String = "text") {
+                self.name = name
+                self.password = password
+                self.type = type
+            }
+        }
+
+        public init(expire: Bool = false, users: [UserPassword]) {
+            self.expire = expire
+            self.users = users
+        }
+    }
+
     public let users: [User]
     public let hostname: String
+    public let chpasswd: Chpasswd?
+    public let sshPwauth: Bool?
+    public let bootcmd: [String]?
     public let packageUpdate: Bool
     public let packageUpgrade: Bool
     public let packages: [String]
@@ -195,6 +235,9 @@ public struct CloudConfig: Codable, Sendable {
     public init(
         users: [User],
         hostname: String,
+        chpasswd: Chpasswd? = nil,
+        sshPwauth: Bool? = nil,
+        bootcmd: [String]? = nil,
         packageUpdate: Bool = false,
         packageUpgrade: Bool = false,
         packages: [String] = [],
@@ -203,6 +246,9 @@ public struct CloudConfig: Codable, Sendable {
     ) {
         self.users = users
         self.hostname = hostname
+        self.chpasswd = chpasswd
+        self.sshPwauth = sshPwauth
+        self.bootcmd = bootcmd
         self.packageUpdate = packageUpdate
         self.packageUpgrade = packageUpgrade
         self.packages = packages
@@ -213,6 +259,9 @@ public struct CloudConfig: Codable, Sendable {
     public enum CodingKeys: String, CodingKey {
         case users
         case hostname
+        case chpasswd
+        case sshPwauth = "ssh_pwauth"
+        case bootcmd
         case packageUpdate = "package_update"
         case packageUpgrade = "package_upgrade"
         case packages
@@ -392,6 +441,75 @@ extension CloudInitConfiguration {
                     content: "hostHome \(homeDir) virtiofs rw,nofail 0 0\n",
                     path: "/etc/fstab",
                     append: true),
+            ])
+
+        return try createCloudInitConfiguration(metadata: metadata, userdata: userdata)
+    }
+
+    /// Creates a cloud-init configuration for rescue VM setup.
+    /// Configures auto-login on serial console and creates rescue user with password.
+    ///
+    /// - Returns: A configured CloudInitConfiguration instance for rescue mode.
+    public static func rescueSetup() throws -> CloudInitConfiguration {
+        let metadata = Metadata(localHostname: "rescue", instanceID: "rescue-vm")
+
+        let userdata = CloudConfig(
+            users: [
+                CloudConfig.User(
+                    name: "rescue",
+                    groups: "wheel",
+                    lockPasswd: false,
+                    passwd: "rescue"
+                )
+            ],
+            hostname: "rescue",
+            chpasswd: CloudConfig.Chpasswd(
+                expire: false,
+                users: [
+                    CloudConfig.Chpasswd.UserPassword(name: "root", password: "rescue")
+                ]
+            ),
+            sshPwauth: true,
+            bootcmd: [
+                "mkdir -p /etc/systemd/system/serial-getty@hvc0.service.d"
+            ],
+            runcmd: [
+                "systemctl daemon-reload",
+                "systemctl enable serial-getty@hvc0.service",
+                "systemctl restart serial-getty@hvc0.service",
+                "touch /etc/cloud/cloud-init.disabled",
+            ],
+            writeFiles: [
+                CloudConfig.FileInfo(
+                    content: """
+                        [Service]
+                        ExecStart=
+                        ExecStart=-/sbin/agetty --autologin rescue --noclear %I $TERM
+                        """,
+                    path: "/etc/systemd/system/serial-getty@hvc0.service.d/autologin.conf",
+                    permissions: "0644"),
+                CloudConfig.FileInfo(
+                    content: """
+
+                        ========================================
+                        VM Rescue Environment (Fedora Cloud)
+                        ========================================
+
+                        Target disk is available at /dev/vdb
+
+                        Useful commands:
+                          lsblk                    - List block devices
+                          mount /dev/vdb1 /mnt     - Mount a partition
+                          fsck /dev/vdb1           - Check filesystem
+                          fdisk -l /dev/vdb        - List partitions
+
+                        Login: rescue / rescue (or root / rescue)
+                        Press Ctrl-] to detach from console.
+                        ========================================
+
+                        """,
+                    path: "/etc/motd",
+                    permissions: "0644"),
             ])
 
         return try createCloudInitConfiguration(metadata: metadata, userdata: userdata)

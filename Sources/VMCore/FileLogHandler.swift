@@ -123,4 +123,20 @@ public enum VMLogger {
             return logger
         }
     }
+
+    /// Creates a logger that writes to a specific file path
+    /// - Parameters:
+    ///   - label: The logger label
+    ///   - logPath: The URL to write logs to
+    /// - Returns: A configured Logger instance
+    public static func makeFileLogger(label: String, logPath: URL) -> Logger {
+        do {
+            let handler = try FileLogHandler(label: label, fileURL: logPath)
+            return Logger(label: label, factory: { _ in handler })
+        } catch {
+            // Fall back to stderr if file logging fails
+            let logger = Logger(label: label)
+            return logger
+        }
+    }
 }

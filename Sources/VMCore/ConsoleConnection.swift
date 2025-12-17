@@ -21,14 +21,16 @@ public enum ConsoleConnectionError: Error, LocalizedError, Sendable {
 public final class ConsoleConnection {
     private let vmName: String
     private let socketPath: URL
+    private let messageHandler: ((String) -> Void)?
     private var socket: Socket?
     private var receiveTask: Task<Void, Never>?
     private var isConnected = false
     private let exitFlag = ExitFlag()
 
-    public init(vmName: String, socketPath: URL) {
+    public init(vmName: String, socketPath: URL, messageHandler: ((String) -> Void)? = nil) {
         self.vmName = vmName
         self.socketPath = socketPath
+        self.messageHandler = messageHandler
     }
 
     /// Connects to the VM console socket
@@ -129,12 +131,12 @@ public final class ConsoleConnection {
         self.socket = nil
         isConnected = false
 
-        // Restore terminal mode BEFORE printing so output is formatted correctly
+        // Restore terminal mode BEFORE outputting messages so they are formatted correctly
         terminal.disableRawMode()
         rawModeEnabled = false
 
-        print("\nDetached from VM console.")
-        print("VM continues running. Use 'vm stop \(vmName)' to stop it.")
+        messageHandler?("\nDetached from VM console")
+        messageHandler?("VM continues running. Use 'vm stop \(vmName)' to stop it")
     }
 
     /// Disconnects from the console

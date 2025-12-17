@@ -295,4 +295,71 @@ public final class Manager: Sendable {
             try fileManager.removeItem(at: path)
         }
     }
+
+    // MARK: - Rescue VM
+
+    /// The name of the rescue VM
+    public static let rescueVMName = "_rescue"
+
+    /// Returns the rescue VM directory (~/.vm/_rescue)
+    public var rescueVMDirectory: URL {
+        vmDirectory(for: Self.rescueVMName)
+    }
+
+    /// Returns the path to the rescue VM disk image (raw format)
+    public var rescueImagePath: URL {
+        diskPath(for: Self.rescueVMName)
+    }
+
+    /// Returns the path to the downloaded qcow2 (before conversion)
+    public var rescueQcow2Path: URL {
+        rescueVMDirectory.appendingPathComponent("source.qcow2")
+    }
+
+    /// Returns the path to the cloud-init ISO for rescue environment
+    public var rescueCloudInitPath: URL {
+        cloudInitISOPath(for: Self.rescueVMName)
+    }
+
+    /// Returns the path to the rescue cache metadata file
+    public var rescueMetadataPath: URL {
+        rescueVMDirectory.appendingPathComponent("rescue-meta.json")
+    }
+
+    /// Checks if the rescue VM exists and is ready
+    public func rescueVMExists() -> Bool {
+        vmExists(Self.rescueVMName)
+            && fileManager.fileExists(atPath: rescueImagePath.path)
+            && fileManager.fileExists(atPath: rescueCloudInitPath.path)
+    }
+
+    /// Checks if the rescue VM is currently running
+    public func isRescueVMRunning() -> Bool {
+        isVMRunning(Self.rescueVMName)
+    }
+
+    /// Returns the file that tracks which target VM is being rescued
+    public var rescueTargetPath: URL {
+        rescueVMDirectory.appendingPathComponent("target.txt")
+    }
+
+    /// Sets which VM is currently being rescued
+    public func setRescueTarget(_ targetVMName: String) throws {
+        try targetVMName.write(to: rescueTargetPath, atomically: true, encoding: .utf8)
+    }
+
+    /// Gets the VM currently being rescued, if any
+    public func getRescueTarget() -> String? {
+        guard let content = try? String(contentsOf: rescueTargetPath, encoding: .utf8) else {
+            return nil
+        }
+        return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Clears the rescue target
+    public func clearRescueTarget() throws {
+        if fileManager.fileExists(atPath: rescueTargetPath.path) {
+            try fileManager.removeItem(at: rescueTargetPath)
+        }
+    }
 }

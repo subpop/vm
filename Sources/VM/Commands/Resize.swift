@@ -56,7 +56,7 @@ struct Resize: AsyncParsableCommand {
 
         // Check if resize is needed
         if newSizeBytes == currentSize {
-            print("Disk is already \(diskManager.formatSize(currentSize)). Nothing to do.")
+            print("Disk is already \(diskManager.formatSize(currentSize)), no changes needed")
             return
         }
 

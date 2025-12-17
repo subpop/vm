@@ -107,7 +107,7 @@ struct Edit: AsyncParsableCommand {
             }
             print("✓ VM '\(name)' updated successfully")
         } else {
-            print("No changes needed.")
+            print("No changes needed")
         }
     }
 }

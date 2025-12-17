@@ -5,7 +5,7 @@ import VMCore
 import Virtualization
 
 /// Internal command to run a VM as a daemon process
-/// This command is hidden and used internally by 'vm start'
+/// This command is hidden and used internally by 'vm start' and 'vm rescue'
 struct RunDaemon: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Run a virtual machine as a daemon (internal use)",
@@ -18,19 +18,65 @@ struct RunDaemon: AsyncParsableCommand {
     @Flag(name: .long, help: "Boot from ISO image (for installation)")
     var iso: Bool = false
 
+    @Flag(name: .long, help: "Run in rescue mode (name must be _rescue)")
+    var rescue: Bool = false
+
+    @Option(name: .long, help: "Path to target disk to attach in rescue mode")
+    var targetDisk: String?
+
     @MainActor
     mutating func run() async throws {
         let vmManager = Manager.shared
 
+        // Determine VM start options and target disk URL for rescue mode
+        var startOptions: VMStartOptions = .normal
+        var targetDiskURL: URL?
+
+        if rescue {
+            // Validate this is the rescue VM
+            guard name == Manager.rescueVMName else {
+                throw RunnerError.configurationError(
+                    "Rescue mode can only be used with the '\(Manager.rescueVMName)' VM")
+            }
+
+            // Validate target disk is provided
+            guard let targetDiskPath = targetDisk else {
+                throw RunnerError.configurationError("--target-disk is required for rescue mode")
+            }
+
+            targetDiskURL = URL(fileURLWithPath: targetDiskPath)
+            guard FileManager.default.fileExists(atPath: targetDiskURL!.path) else {
+                throw DiskError.fileNotFound(targetDiskPath)
+            }
+
+            startOptions = .rescue(targetDisk: targetDiskURL!)
+        } else if iso {
+            startOptions = VMStartOptions(attachISO: true)
+        }
+
         // Create logger that writes to VM's log file
-        let logger = VMLogger.makeLogger(
-            label: "run-daemon", vmName: name, manager: vmManager)
-        logger.info("Daemon starting", metadata: ["vm": "\(name)", "pid": "\(getpid())"])
+        let logLabel = rescue ? "rescue-daemon" : "run-daemon"
+        let logger = VMLogger.makeLogger(label: logLabel, vmName: name, manager: vmManager)
+
+        if rescue {
+            logger.info(
+                "Rescue daemon starting",
+                metadata: ["target_disk": "\(targetDiskURL?.path ?? "")", "pid": "\(getpid())"]
+            )
+        } else {
+            logger.info("Daemon starting", metadata: ["vm": "\(name)", "pid": "\(getpid())"])
+        }
 
         // Check if VM exists
         guard vmManager.vmExists(name) else {
             logger.error("VM not found", metadata: ["vm": "\(name)"])
             throw ManagerError.vmNotFound(name)
+        }
+
+        // Check if VM is already running (only for rescue mode, normal mode checked by caller)
+        if rescue && vmManager.getRunningPID(for: name) != nil {
+            logger.error("VM is already running")
+            throw RunnerError.alreadyRunning
         }
 
         // Load configuration
@@ -50,8 +96,8 @@ struct RunDaemon: AsyncParsableCommand {
             throw DiskError.fileNotFound(diskPath.path)
         }
 
-        // Check ISO if requested
-        if iso {
+        // Check ISO if requested (non-rescue mode only)
+        if iso && !rescue {
             guard let isoPath = config.isoPath else {
                 logger.error("No ISO configured for VM")
                 throw RunnerError.configurationError(
@@ -75,26 +121,35 @@ struct RunDaemon: AsyncParsableCommand {
 
         // Save PID
         let runtimeInfo = VMRuntimeInfo(pid: getpid(), startedAt: Date())
-        try vmManager.saveRuntimeInfo(runtimeInfo, for: config.name)
+        try vmManager.saveRuntimeInfo(runtimeInfo, for: name)
         logger.debug("Runtime info saved")
 
         defer {
-            logger.debug("Cleaning up runtime info and network info")
-            try? vmManager.clearRuntimeInfo(for: config.name)
-            try? vmManager.clearNetworkInfo(for: config.name)
+            logger.debug("Cleaning up runtime info")
+            try? vmManager.clearRuntimeInfo(for: name)
+            if rescue {
+                try? vmManager.clearRescueTarget()
+            } else {
+                try? vmManager.clearNetworkInfo(for: name)
+            }
         }
 
         // Start the VM
         logger.info("Starting VM...")
-        try await runner.start(
-            attachISO: iso,
-            serialInput: inputPipe.fileHandleForReading,
-            serialOutput: outputPipe.fileHandleForWriting
-        )
+        do {
+            try await runner.start(
+                options: startOptions,
+                serialInput: inputPipe.fileHandleForReading,
+                serialOutput: outputPipe.fileHandleForWriting
+            )
+        } catch {
+            logger.error("Failed to start VM", metadata: ["error": "\(error)"])
+            throw error
+        }
         logger.info("VM started successfully")
 
         // Create and start console listener
-        let socketPath = vmManager.consoleSocketPath(for: config.name)
+        let socketPath = vmManager.consoleSocketPath(for: name)
         let listener = ConsoleListener(
             socketPath: socketPath,
             vmInput: inputPipe.fileHandleForWriting,
@@ -112,32 +167,27 @@ struct RunDaemon: AsyncParsableCommand {
             }
         }
 
-        // Create vsock guest agent if socket device is available
-        var guestAgent: VsockGuestAgent?
-        if let socketDevice = runner.guestAgentSocketDevice {
-            logger.debug("Creating vsock guest agent", metadata: ["port": "9001"])
-            guestAgent = VsockGuestAgent(socketDevice: socketDevice)
-        } else {
-            logger.warning("No vsock device available for guest agent")
-        }
-
         // Set up exit flag (needed by tasks below)
         let exitFlag = ExitFlag()
 
-        // Query guest network information in background and save it
-        if let agent = guestAgent {
+        // Create vsock guest agent if socket device is available (normal mode only)
+        if !rescue, let socketDevice = runner.guestAgentSocketDevice {
+            logger.debug("Creating vsock guest agent", metadata: ["port": "9001"])
+            let guestAgent = VsockGuestAgent(socketDevice: socketDevice)
+
+            // Query guest network information in background and save it
             Task {
                 logger.debug("Starting guest network query task")
                 await queryGuestNetworkInfo(
-                    runner: runner, agent: agent, vmName: config.name, saveToFile: true,
+                    runner: runner, agent: guestAgent, vmName: config.name, saveToFile: true,
                     logger: logger)
                 logger.debug("Initial network query complete, starting periodic queries")
                 // Start periodic querying
                 await periodicGuestNetworkQuery(
-                    runner: runner, agent: agent, vmName: config.name, exitFlag: exitFlag,
+                    runner: runner, agent: guestAgent, vmName: config.name, exitFlag: exitFlag,
                     logger: logger)
             }
-        } else {
+        } else if !rescue {
             logger.debug("Skipping guest network queries (no guest agent available)")
         }
 

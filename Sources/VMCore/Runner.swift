@@ -33,6 +33,45 @@ public protocol RunnerDelegate: AnyObject {
     func vmDidStart()
 }
 
+/// Options for starting a VM
+public struct VMStartOptions: Sendable {
+    /// Whether to attach the configured ISO for installation
+    public var attachISO: Bool
+    /// Optional secondary disk to attach (e.g., for rescue mode)
+    public var secondaryDisk: URL?
+    /// Whether to enable the vsock guest agent
+    public var enableGuestAgent: Bool
+    /// Whether to enable virtiofs directory sharing
+    public var enableDirectorySharing: Bool
+
+    public init(
+        attachISO: Bool = false,
+        secondaryDisk: URL? = nil,
+        enableGuestAgent: Bool = true,
+        enableDirectorySharing: Bool = true
+    ) {
+        self.attachISO = attachISO
+        self.secondaryDisk = secondaryDisk
+        self.enableGuestAgent = enableGuestAgent
+        self.enableDirectorySharing = enableDirectorySharing
+    }
+
+    /// Default options for normal VM startup
+    public static var normal: VMStartOptions {
+        VMStartOptions()
+    }
+
+    /// Options for rescue mode with a target disk
+    public static func rescue(targetDisk: URL) -> VMStartOptions {
+        VMStartOptions(
+            attachISO: false,
+            secondaryDisk: targetDisk,
+            enableGuestAgent: false,
+            enableDirectorySharing: false
+        )
+    }
+}
+
 /// Runs a Linux VM using Apple Virtualization.framework
 @MainActor
 public final class Runner: NSObject {
@@ -67,13 +106,25 @@ public final class Runner: NSObject {
         super.init()
     }
 
-    /// Creates the VZ configuration for the VM
+    /// Creates the VZ configuration for the VM with the given options
+    /// - Parameters:
+    ///   - options: Configuration options for the VM startup
+    ///   - serialInput: File handle for serial input
+    ///   - serialOutput: File handle for serial output
+    /// - Returns: A configured VZVirtualMachineConfiguration
     nonisolated public func createVZConfiguration(
-        attachISO: Bool = false,
+        options: VMStartOptions = .normal,
         serialInput: FileHandle,
         serialOutput: FileHandle
     ) throws -> VZVirtualMachineConfiguration {
-        logger.debug("Creating VZ configuration", metadata: ["vm": "\(vmConfig.name)"])
+        logger.debug(
+            "Creating VZ configuration",
+            metadata: [
+                "vm": "\(vmConfig.name)",
+                "guest_agent": "\(options.enableGuestAgent)",
+                "directory_sharing": "\(options.enableDirectorySharing)",
+            ]
+        )
 
         let config = VZVirtualMachineConfiguration()
 
@@ -97,7 +148,6 @@ public final class Runner: NSObject {
             efiBootLoader.variableStore = VZEFIVariableStore(url: nvramPath)
         } else {
             logger.debug("Creating new NVRAM", metadata: ["path": "\(nvramPath.path)"])
-            // Create new EFI variable store
             efiBootLoader.variableStore = try VZEFIVariableStore(creatingVariableStoreAt: nvramPath)
         }
         config.bootLoader = efiBootLoader
@@ -123,8 +173,22 @@ public final class Runner: NSObject {
             storageDevices.append(disk)
         }
 
+        // Secondary disk (e.g., target disk in rescue mode)
+        if let secondaryDisk = options.secondaryDisk {
+            logger.debug(
+                "Attaching secondary disk", metadata: ["path": "\(secondaryDisk.path)"])
+            let secondaryAttachment = try VZDiskImageStorageDeviceAttachment(
+                url: secondaryDisk,
+                readOnly: false,
+                cachingMode: .automatic,
+                synchronizationMode: .full
+            )
+            let secondaryDevice = VZVirtioBlockDeviceConfiguration(attachment: secondaryAttachment)
+            storageDevices.append(secondaryDevice)
+        }
+
         // ISO attachment (for installation)
-        if attachISO, let isoPathString = vmConfig.isoPath {
+        if options.attachISO, let isoPathString = vmConfig.isoPath {
             let isoURL = URL(fileURLWithPath: (isoPathString as NSString).expandingTildeInPath)
             if FileManager.default.fileExists(atPath: isoURL.path) {
                 logger.debug("Attaching ISO", metadata: ["path": "\(isoURL.path)"])
@@ -178,14 +242,15 @@ public final class Runner: NSObject {
             fileHandleForWriting: serialOutput
         )
         serialConfig.attachment = serialAttachment
-
         config.serialPorts = [serialConfig]
         logger.debug("Serial console configured")
 
-        // Virtio socket for guest agent communication
-        let socketDevice = VZVirtioSocketDeviceConfiguration()
-        config.socketDevices = [socketDevice]
-        logger.debug("Virtio socket configured for guest agent")
+        // Virtio socket for guest agent communication (if enabled)
+        if options.enableGuestAgent {
+            let socketDevice = VZVirtioSocketDeviceConfiguration()
+            config.socketDevices = [socketDevice]
+            logger.debug("Virtio socket configured for guest agent")
+        }
 
         // Entropy device (required for Linux)
         config.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
@@ -197,15 +262,19 @@ public final class Runner: NSObject {
         config.keyboards = [VZUSBKeyboardConfiguration()]
         config.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
 
-        // Share host home directory with guest via virtiofs
-        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
-        let shareConfig = VZVirtioFileSystemDeviceConfiguration(tag: "hostHome")
-        shareConfig.share = VZSingleDirectoryShare(
-            directory: VZSharedDirectory(url: homeDirectory, readOnly: false)
-        )
-        config.directorySharingDevices = [shareConfig]
-        logger.debug(
-            "Host home directory sharing configured", metadata: ["path": "\(homeDirectory.path)"])
+        // Share host home directory with guest via virtiofs (if enabled)
+        if options.enableDirectorySharing {
+            let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+            let shareConfig = VZVirtioFileSystemDeviceConfiguration(tag: "hostHome")
+            shareConfig.share = VZSingleDirectoryShare(
+                directory: VZSharedDirectory(url: homeDirectory, readOnly: false)
+            )
+            config.directorySharingDevices = [shareConfig]
+            logger.debug(
+                "Host home directory sharing configured",
+                metadata: ["path": "\(homeDirectory.path)"]
+            )
+        }
 
         // Validate
         try config.validate()
@@ -214,14 +283,24 @@ public final class Runner: NSObject {
         return config
     }
 
-    /// Starts the VM
+    /// Starts the VM with the given options
+    /// - Parameters:
+    ///   - options: Configuration options for the VM startup
+    ///   - serialInput: File handle for serial input
+    ///   - serialOutput: File handle for serial output
     public func start(
-        attachISO: Bool = false,
+        options: VMStartOptions = .normal,
         serialInput: FileHandle,
         serialOutput: FileHandle
     ) async throws {
         logger.info(
-            "Starting VM", metadata: ["vm": "\(vmConfig.name)", "attach_iso": "\(attachISO)"])
+            "Starting VM",
+            metadata: [
+                "vm": "\(vmConfig.name)",
+                "guest_agent": "\(options.enableGuestAgent)",
+                "secondary_disk": "\(options.secondaryDisk?.path ?? "none")",
+            ]
+        )
 
         guard virtualMachine == nil || virtualMachine?.state == .stopped else {
             logger.error("VM is already running")
@@ -229,7 +308,7 @@ public final class Runner: NSObject {
         }
 
         let config = try createVZConfiguration(
-            attachISO: attachISO,
+            options: options,
             serialInput: serialInput,
             serialOutput: serialOutput
         )
@@ -244,7 +323,7 @@ public final class Runner: NSObject {
         logger.info("VM started successfully")
 
         // Capture the socket device for guest agent communication after VM starts
-        if !vm.socketDevices.isEmpty {
+        if options.enableGuestAgent && !vm.socketDevices.isEmpty {
             self.guestAgentSocketDevice = vm.socketDevices[0] as? VZVirtioSocketDevice
             logger.debug("Guest agent socket device captured")
         }

@@ -33,7 +33,8 @@ struct List: AsyncParsableCommand {
         let vmManager = Manager.shared
         let diskManager = DiskManager.shared
 
-        let vms = try vmManager.listVMs()
+        // Filter out the special rescue VM from the list
+        let vms = try vmManager.listVMs().filter { $0 != Manager.rescueVMName }
 
         switch format {
         case .text:
@@ -45,7 +46,7 @@ struct List: AsyncParsableCommand {
 
     private func printTextOutput(vms: [String], vmManager: Manager, diskManager: DiskManager) {
         if vms.isEmpty {
-            print("No virtual machines found.")
+            print("No virtual machines found")
             print("Create one with: vm create <name> --iso <path>")
             return
         }

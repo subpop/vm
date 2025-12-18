@@ -166,7 +166,7 @@ public final class Runner: NSObject {
             let diskAttachment = try VZDiskImageStorageDeviceAttachment(
                 url: diskPath,
                 readOnly: false,
-                cachingMode: .automatic,
+                cachingMode: .cached,
                 synchronizationMode: .full
             )
             let disk = VZVirtioBlockDeviceConfiguration(attachment: diskAttachment)
@@ -180,7 +180,7 @@ public final class Runner: NSObject {
             let secondaryAttachment = try VZDiskImageStorageDeviceAttachment(
                 url: secondaryDisk,
                 readOnly: false,
-                cachingMode: .automatic,
+                cachingMode: .cached,
                 synchronizationMode: .full
             )
             let secondaryDevice = VZVirtioBlockDeviceConfiguration(attachment: secondaryAttachment)

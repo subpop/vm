@@ -96,7 +96,7 @@ public final class VsockGuestAgent {
             return false
         }
 
-        let handle = FileHandle(fileDescriptor: connection.fileDescriptor, closeOnDealloc: false)
+        let handle = FileHandle(fileDescriptor: connection.fileDescriptor, closeOnDealloc: true)
 
         let request = JSONRPCRequest(execute: "guest-ping")
         do {
@@ -115,7 +115,7 @@ public final class VsockGuestAgent {
             throw QemuGuestAgentError.notConnected
         }
 
-        let handle = FileHandle(fileDescriptor: connection.fileDescriptor, closeOnDealloc: false)
+        let handle = FileHandle(fileDescriptor: connection.fileDescriptor, closeOnDealloc: true)
 
         let request = JSONRPCRequest(execute: "guest-network-get-interfaces")
         let response: [GuestNetworkInterface] = try await sendCommand(

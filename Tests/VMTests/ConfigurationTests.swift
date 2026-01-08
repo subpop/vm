@@ -88,19 +88,22 @@ struct CloudInitConfigurationTests {
         // Verify packages include qemu-guest-agent (checkpolicy installed conditionally)
         #expect(userData["packages"] as? [String] == ["qemu-guest-agent"])
 
-        // Verify runcmd includes conditional SELinux policy setup and service enable
+        // Verify runcmd includes conditional SELinux policy setup, service enable, and mount
         let runcmd = userData["runcmd"] as? [String]
-        #expect(runcmd?.count == 2)
+        #expect(runcmd?.count == 3)
         // First command handles SELinux conditionally
         #expect(runcmd?[0].contains("semodule") == true)
         #expect(runcmd?[0].contains("checkmodule") == true)
-        // Second command handles service startup (systemd or OpenRC)
+        // Second command handles service startup with systemd
         #expect(runcmd?[1].contains("systemctl") == true)
-        #expect(runcmd?[1].contains("rc-update") == true)
+        #expect(runcmd?[1].contains("daemon-reload") == true)
+        // Third command creates mount point and mounts
+        #expect(runcmd?[2].contains("mkdir -p") == true)
+        #expect(runcmd?[2].contains("mount -a") == true)
 
         // Verify write_files array (snake_case key)
         let writeFiles = userData["write_files"] as! [[String: Any]]
-        #expect(writeFiles.count == 2)
+        #expect(writeFiles.count == 3)
 
         // Find SELinux policy file
         let selinuxFile = writeFiles.first { $0["path"] as? String == "/etc/selinux/qemu-vsock.te" }
@@ -130,5 +133,12 @@ struct CloudInitConfigurationTests {
                 [Install]
                 WantedBy=multi-user.target
                 """)
+
+        // Find fstab entry file
+        let fstabFile = writeFiles.first { $0["path"] as? String == "/etc/fstab" }
+        #expect(fstabFile != nil)
+        #expect((fstabFile?["content"] as? String)?.contains("hostHome") == true)
+        #expect((fstabFile?["content"] as? String)?.contains("virtiofs") == true)
+        #expect(fstabFile?["append"] as? Bool == true)
     }
 }

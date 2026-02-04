@@ -64,6 +64,7 @@ public struct GuestNetworkInterface: Codable, Sendable {
 public final class VsockGuestAgent {
     private let socketDevice: VZVirtioSocketDevice
     private var connection: VZVirtioSocketConnection?
+    private var handle: FileHandle?
     private var isConnected = false
     private var logger: Logger { VMLogger.logger(for: "vsock-guest-agent") }
 
@@ -81,6 +82,8 @@ public final class VsockGuestAgent {
                 switch result {
                 case .success(let connection):
                     self?.connection = connection
+                    self?.handle = FileHandle(
+                        fileDescriptor: connection.fileDescriptor, closeOnDealloc: false)
                     self?.isConnected = true
                     self?.logger.info(
                         "Connected to guest agent via vsock on port \(GUEST_AGENT_PORT)")
@@ -95,15 +98,13 @@ public final class VsockGuestAgent {
 
     /// Sends a ping to check if the guest agent is responding
     public func ping(timeout: TimeInterval = 5.0) async throws -> Bool {
-        guard isConnected, let connection = connection else {
+        guard isConnected else {
             return false
         }
 
-        let handle = FileHandle(fileDescriptor: connection.fileDescriptor, closeOnDealloc: true)
-
         let request = JSONRPCRequest(execute: "guest-ping")
         do {
-            let _: EmptyResponse = try await sendCommand(request, timeout: timeout, handle: handle)
+            let _: EmptyResponse = try await sendCommand(request, timeout: timeout)
             return true
         } catch {
             return false
@@ -114,24 +115,23 @@ public final class VsockGuestAgent {
     public func getNetworkInterfaces(timeout: TimeInterval = 5.0) async throws
         -> [GuestNetworkInterface]
     {
-        guard isConnected, let connection = connection else {
+        guard isConnected else {
             throw QemuGuestAgentError.notConnected
         }
 
-        let handle = FileHandle(fileDescriptor: connection.fileDescriptor, closeOnDealloc: true)
-
         let request = JSONRPCRequest(execute: "guest-network-get-interfaces")
-        let response: [GuestNetworkInterface] = try await sendCommand(
-            request, timeout: timeout, handle: handle)
+        let response: [GuestNetworkInterface] = try await sendCommand(request, timeout: timeout)
         return response
     }
 
     /// Sends a command to the guest agent and waits for a response
-    private func sendCommand<T: Codable>(
-        _ request: JSONRPCRequest,
-        timeout: TimeInterval,
-        handle: FileHandle
-    ) async throws -> T {
+    private func sendCommand<T: Codable>(_ request: JSONRPCRequest, timeout: TimeInterval)
+        async throws -> T
+    {
+        guard isConnected, let handle = handle else {
+            throw QemuGuestAgentError.notConnected
+        }
+
         // Encode the request
         let encoder = JSONEncoder()
         guard let requestData = try? encoder.encode(request) else {
@@ -145,6 +145,8 @@ public final class VsockGuestAgent {
         // Send the request
         try handle.write(contentsOf: dataWithNewline)
 
+        logger.debug("sent request", metadata: ["request": "\(request)"])
+
         // Read response with timeout
         let responseData = try await withTimeout(timeout) {
             try await self.readResponse(from: handle)
@@ -155,6 +157,8 @@ public final class VsockGuestAgent {
         guard let response = try? decoder.decode(JSONRPCResponse<T>.self, from: responseData) else {
             throw QemuGuestAgentError.decodingError
         }
+
+        logger.debug("received response", metadata: ["response": "\(response)"])
 
         // Check for errors
         if let error = response.error {

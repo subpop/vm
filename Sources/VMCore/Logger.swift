@@ -1,3 +1,4 @@
+import Foundation
 import Logging
 import Synchronization
 
@@ -8,6 +9,7 @@ public enum VMLogger {
 
     /// Returns a multiplex (file + stderr) logger for the given component label.
     /// Uses LogContext.current when set; otherwise stderr-only. Handlers are cached per (label, path).
+    /// Minimum log level is taken from the `VM_LOG_LEVEL` environment variable when the handler is created.
     public static func logger(for componentLabel: String) -> Logger {
         let context = LogContext.current
         let pathString = context?.logPath.path ?? ""
@@ -17,7 +19,7 @@ public enum VMLogger {
             if let cached = cache[cacheKey] {
                 return cached
             }
-            let newHandler: LogHandler
+            var newHandler: LogHandler
             if let logPath = context?.logPath {
                 do {
                     let fileHandler = try FileLogHandler(label: componentLabel, fileURL: logPath)
@@ -31,6 +33,10 @@ public enum VMLogger {
             } else {
                 newHandler = StreamLogHandler.standardError(label: componentLabel)
             }
+            newHandler.logLevel =
+                Logger.Level(
+                    rawValue: ProcessInfo.processInfo.environment["VM_LOG_LEVEL"]?.lowercased()
+                        ?? "info") ?? .info
             cache[cacheKey] = newHandler
             return newHandler
         }

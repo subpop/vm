@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import Virtualization
 
 /// Port number for guest agent vsock communication
@@ -64,6 +65,7 @@ public final class VsockGuestAgent {
     private let socketDevice: VZVirtioSocketDevice
     private var connection: VZVirtioSocketConnection?
     private var isConnected = false
+    private var logger: Logger { VMLogger.logger(for: "vsock-guest-agent") }
 
     /// Initialize with a vsock device from the VM
     public init(socketDevice: VZVirtioSocketDevice) {
@@ -80,10 +82,11 @@ public final class VsockGuestAgent {
                 case .success(let connection):
                     self?.connection = connection
                     self?.isConnected = true
-                    debugLog("Connected to guest agent via vsock on port \(GUEST_AGENT_PORT)")
+                    self?.logger.info(
+                        "Connected to guest agent via vsock on port \(GUEST_AGENT_PORT)")
                     continuation.resume()
                 case .failure(let error):
-                    debugLog("Failed to connect to guest agent: \(error)")
+                    self?.logger.error("Failed to connect to guest agent: \(error)")
                     continuation.resume(throwing: error)
                 }
             }
@@ -255,10 +258,3 @@ private struct JSONRPCError: Codable {
 
 /// Empty response for commands that don't return data
 private struct EmptyResponse: Codable {}
-
-/// Debug logging helper (same as RunDaemon)
-private func debugLog(_ message: String) {
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    let logMessage = "[\(timestamp)] [vsock-agent] \(message)\n"
-    FileHandle.standardError.write(Data(logMessage.utf8))
-}

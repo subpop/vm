@@ -98,11 +98,10 @@ public final class Runner: NSObject {
         virtualMachine?.state == .running
     }
 
-    public init(config: VMConfiguration, manager: Manager = .shared, logger: Logger? = nil) {
+    public init(config: VMConfiguration, manager: Manager = .shared) {
         self.vmConfig = config
         self.vmManager = manager
-        self.logger =
-            logger ?? VMLogger.makeLogger(label: "runner", vmName: config.name, manager: manager)
+        self.logger = VMLogger.logger(for: "runner")
         super.init()
     }
 

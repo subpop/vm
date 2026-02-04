@@ -1,5 +1,6 @@
 import Foundation
 import Logging
+import Synchronization
 
 /// A LogHandler that writes log messages to a file
 public struct FileLogHandler: LogHandler, @unchecked Sendable {
@@ -68,75 +69,6 @@ public struct FileLogHandler: LogHandler, @unchecked Sendable {
         if let data = logMessage.data(using: .utf8) {
             try? fileHandle.write(contentsOf: data)
             try? fileHandle.synchronize()
-        }
-    }
-}
-
-/// Factory for creating file-based loggers for VMs
-public enum VMLogger {
-    /// Creates a logger that writes to a VM's log file
-    /// - Parameters:
-    ///   - label: The logger label (e.g., "run-daemon", "runner")
-    ///   - vmName: The name of the VM
-    ///   - manager: The VM manager to get paths from
-    /// - Returns: A configured Logger instance
-    public static func makeLogger(label: String, vmName: String, manager: Manager = .shared)
-        -> Logger
-    {
-        let logPath = manager.logPath(for: vmName)
-
-        do {
-            let handler = try FileLogHandler(label: label, fileURL: logPath)
-            return Logger(label: label, factory: { _ in handler })
-        } catch {
-            // Fall back to stderr if file logging fails
-            let logger = Logger(label: label)
-            logger.warning("Failed to create file logger, falling back to stderr: \(error)")
-            return logger
-        }
-    }
-
-    /// Creates a logger that writes to both file and stderr (for debugging)
-    /// - Parameters:
-    ///   - label: The logger label
-    ///   - vmName: The name of the VM
-    ///   - manager: The VM manager to get paths from
-    /// - Returns: A configured Logger instance
-    public static func makeMultiplexLogger(
-        label: String, vmName: String, manager: Manager = .shared
-    )
-        -> Logger
-    {
-        let logPath = manager.logPath(for: vmName)
-
-        do {
-            let fileHandler = try FileLogHandler(label: label, fileURL: logPath)
-            let multiplexHandler = MultiplexLogHandler([
-                fileHandler,
-                StreamLogHandler.standardError(label: label),
-            ])
-            return Logger(label: label, factory: { _ in multiplexHandler })
-        } catch {
-            // Fall back to stderr only if file logging fails
-            let logger = Logger(label: label)
-            logger.warning("Failed to create file logger, using stderr only: \(error)")
-            return logger
-        }
-    }
-
-    /// Creates a logger that writes to a specific file path
-    /// - Parameters:
-    ///   - label: The logger label
-    ///   - logPath: The URL to write logs to
-    /// - Returns: A configured Logger instance
-    public static func makeFileLogger(label: String, logPath: URL) -> Logger {
-        do {
-            let handler = try FileLogHandler(label: label, fileURL: logPath)
-            return Logger(label: label, factory: { _ in handler })
-        } catch {
-            // Fall back to stderr if file logging fails
-            let logger = Logger(label: label)
-            return logger
         }
     }
 }

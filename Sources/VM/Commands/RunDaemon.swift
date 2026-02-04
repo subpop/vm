@@ -54,9 +54,9 @@ struct RunDaemon: AsyncParsableCommand {
             startOptions = VMStartOptions(attachISO: true)
         }
 
-        // Create logger that writes to VM's log file
-        let logLabel = rescue ? "rescue-daemon" : "run-daemon"
-        let logger = VMLogger.makeLogger(label: logLabel, vmName: name, manager: vmManager)
+        // Set process-wide log context so all component loggers write to this VM's log file + stderr
+        LogContext.current = LogState(vmName: name, logPath: vmManager.logPath(for: name))
+        let logger = VMLogger.logger(for: rescue ? "rescue-daemon" : "run-daemon")
 
         if rescue {
             logger.info(
@@ -116,7 +116,7 @@ struct RunDaemon: AsyncParsableCommand {
         logger.debug("Serial I/O pipes created")
 
         // Create the VM runner
-        let runner = Runner(config: config, manager: vmManager, logger: logger)
+        let runner = Runner(config: config, manager: vmManager)
         logger.debug("VM runner created")
 
         // Save PID

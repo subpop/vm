@@ -16,25 +16,26 @@ public struct FileLogHandler: LogHandler, @unchecked Sendable {
         set { metadata[key] = newValue }
     }
 
-    /// Creates a FileLogHandler that writes to the specified file URL
-    /// - Parameters:
-    ///   - label: The logger label
-    ///   - fileURL: The URL to write logs to
-    /// - Throws: If the file cannot be created or opened
+    /// Creates a FileLogHandler that writes to the specified file URL.
+    /// Opens a new FileHandle internally; prefer `init(label:fileHandle:)` when
+    /// you need explicit control over the file handle's lifecycle.
     public init(label: String, fileURL: URL) throws {
-        self.label = label
-        self.dateFormatter = ISO8601DateFormatter()
-        self.dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        // Create file if it doesn't exist
         let fileManager = FileManager.default
         if !fileManager.fileExists(atPath: fileURL.path) {
             fileManager.createFile(atPath: fileURL.path, contents: nil)
         }
+        let fh = try FileHandle(forWritingTo: fileURL)
+        try fh.seekToEnd()
+        self.init(label: label, fileHandle: fh)
+    }
 
-        // Open for appending
-        self.fileHandle = try FileHandle(forWritingTo: fileURL)
-        try self.fileHandle.seekToEnd()
+    /// Creates a FileLogHandler backed by an already-open file handle.
+    /// The caller retains ownership and is responsible for eventually closing it.
+    public init(label: String, fileHandle: FileHandle) {
+        self.label = label
+        self.fileHandle = fileHandle
+        self.dateFormatter = ISO8601DateFormatter()
+        self.dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     }
 
     public func log(

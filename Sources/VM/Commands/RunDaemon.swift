@@ -132,6 +132,7 @@ struct RunDaemon: AsyncParsableCommand {
             } else {
                 try? vmManager.clearNetworkInfo(for: name)
             }
+            VMLogger.shutdown()
         }
 
         // Start the VM

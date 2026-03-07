@@ -280,18 +280,19 @@ public final class DiskManager: Sendable {
         ]
 
         let errorPipe = Pipe()
-        process.standardOutput = nil
+        process.standardOutput = FileHandle.nullDevice
         process.standardError = errorPipe
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             throw DiskError.conversionFailed(error.localizedDescription)
         }
 
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
         guard process.terminationStatus == 0 else {
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
             let errorString = String(data: errorData, encoding: .utf8) ?? "Unknown error"
             throw DiskError.conversionFailed(
                 errorString.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -320,14 +321,14 @@ public final class DiskManager: Sendable {
 
         let outputPipe = Pipe()
         process.standardOutput = outputPipe
-        process.standardError = nil
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
 
             if process.terminationStatus == 0 {
-                let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
                 if let path = String(data: data, encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines),
                     !path.isEmpty

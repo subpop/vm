@@ -191,15 +191,17 @@ public final class Socket: Sendable {
             pendingOps.withLock { $0[opID] = PendingOp { source.cancel() } }
 
             source.setEventHandler { [fd, weak self] in
-                self?.pendingOps.withLock { _ = $0.removeValue(forKey: opID) }
-                source.cancel()
-
                 let alreadyResumed = resumed.withLock { r in
                     if r { return true }
                     r = true
                     return false
                 }
-                guard !alreadyResumed else { return }
+                self?.pendingOps.withLock { _ = $0.removeValue(forKey: opID) }
+
+                guard !alreadyResumed else {
+                    source.cancel()
+                    return
+                }
 
                 var clientAddr = sockaddr_un()
                 var addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
@@ -219,6 +221,7 @@ public final class Socket: Sendable {
                             description: String(cString: strerror(errno))
                         ))
                 }
+                source.cancel()
             }
 
             source.setCancelHandler {
@@ -309,15 +312,17 @@ public final class Socket: Sendable {
             pendingOps.withLock { $0[opID] = PendingOp { source.cancel() } }
 
             source.setEventHandler { [fd, weak self] in
-                self?.pendingOps.withLock { _ = $0.removeValue(forKey: opID) }
-                source.cancel()
-
                 let alreadyResumed = resumed.withLock { r in
                     if r { return true }
                     r = true
                     return false
                 }
-                guard !alreadyResumed else { return }
+                self?.pendingOps.withLock { _ = $0.removeValue(forKey: opID) }
+
+                guard !alreadyResumed else {
+                    source.cancel()
+                    return
+                }
 
                 var buffer = [UInt8](repeating: 0, count: maxBytes)
                 let bytesRead = Darwin.recv(fd, &buffer, maxBytes, 0)
@@ -337,6 +342,7 @@ public final class Socket: Sendable {
                             ))
                     }
                 }
+                source.cancel()
             }
 
             source.setCancelHandler {

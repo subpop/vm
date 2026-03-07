@@ -104,20 +104,20 @@ public struct CloudInitISOGenerator: Sendable {
             sourceDir.path,
         ]
 
-        let outputPipe = Pipe()
         let errorPipe = Pipe()
-        process.standardOutput = outputPipe
+        process.standardOutput = FileHandle.nullDevice
         process.standardError = errorPipe
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             throw CloudInitError.isoGenerationFailed(error.localizedDescription)
         }
 
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
         guard process.terminationStatus == 0 else {
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
             let errorString = String(data: errorData, encoding: .utf8) ?? "Unknown error"
             throw CloudInitError.isoGenerationFailed(errorString)
         }

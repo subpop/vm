@@ -96,6 +96,15 @@ public final class VsockGuestAgent {
         }
     }
 
+    /// Disconnect from the guest agent and release the connection's file descriptor
+    public func disconnect() {
+        guard isConnected else { return }
+        isConnected = false
+        handle = nil
+        connection = nil
+        logger.info("Disconnected from guest agent")
+    }
+
     /// Sends a ping to check if the guest agent is responding
     public func ping(timeout: TimeInterval = 5.0) async throws -> Bool {
         guard isConnected else {

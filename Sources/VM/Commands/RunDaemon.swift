@@ -171,20 +171,22 @@ struct RunDaemon: AsyncParsableCommand {
         let exitFlag = ExitFlag()
 
         // Create vsock guest agent if socket device is available (normal mode only)
+        var guestAgent: VsockGuestAgent?
+        var guestAgentTask: Task<Void, Never>?
+
         if !rescue, let socketDevice = runner.guestAgentSocketDevice {
             logger.debug("Creating vsock guest agent", metadata: ["port": "9001"])
-            let guestAgent = VsockGuestAgent(socketDevice: socketDevice)
+            let agent = VsockGuestAgent(socketDevice: socketDevice)
+            guestAgent = agent
 
-            // Query guest network information in background and save it
-            Task {
+            guestAgentTask = Task {
                 logger.debug("Starting guest network query task")
                 await queryGuestNetworkInfo(
-                    runner: runner, agent: guestAgent, vmName: config.name, saveToFile: true,
+                    runner: runner, agent: agent, vmName: config.name, saveToFile: true,
                     logger: logger)
                 logger.debug("Initial network query complete, starting periodic queries")
-                // Start periodic querying
                 await periodicGuestNetworkQuery(
-                    runner: runner, agent: guestAgent, vmName: config.name, exitFlag: exitFlag,
+                    runner: runner, agent: agent, vmName: config.name, exitFlag: exitFlag,
                     logger: logger)
             }
         } else if !rescue {
@@ -230,6 +232,9 @@ struct RunDaemon: AsyncParsableCommand {
             }
             try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
         }
+
+        guestAgentTask?.cancel()
+        guestAgent?.disconnect()
 
         if exitFlag.shouldExit && runner.isRunning {
             logger.info("Stopping VM due to exit signal")

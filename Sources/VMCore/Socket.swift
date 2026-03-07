@@ -33,6 +33,14 @@ public final class Socket: Sendable {
     /// State tracking for the socket
     private let state: SocketState
 
+    /// Pending async operations that must be cancelled before closing the fd.
+    /// Wraps a cancel closure; marked @unchecked Sendable because
+    /// DispatchSource.cancel() is thread-safe.
+    private struct PendingOp: @unchecked Sendable {
+        let cancel: () -> Void
+    }
+    private let pendingOps = Mutex<[UUID: PendingOp]>([:])
+
     /// Thread-safe state wrapper using Swift 6 Mutex
     private final class SocketState: Sendable {
         /// Internal state protected by a mutex
@@ -75,6 +83,7 @@ public final class Socket: Sendable {
 
     deinit {
         if !state.isClosed {
+            cancelAllPendingOps()
             Darwin.close(fd)
             if let path = state.boundPath {
                 unlink(path)
@@ -176,8 +185,21 @@ public final class Socket: Sendable {
                 queue: DispatchQueue.global()
             )
 
-            source.setEventHandler { [fd] in
+            let opID = UUID()
+            let resumed = Mutex(false)
+
+            pendingOps.withLock { $0[opID] = PendingOp { source.cancel() } }
+
+            source.setEventHandler { [fd, weak self] in
+                self?.pendingOps.withLock { _ = $0.removeValue(forKey: opID) }
                 source.cancel()
+
+                let alreadyResumed = resumed.withLock { r in
+                    if r { return true }
+                    r = true
+                    return false
+                }
+                guard !alreadyResumed else { return }
 
                 var clientAddr = sockaddr_un()
                 var addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
@@ -200,7 +222,13 @@ public final class Socket: Sendable {
             }
 
             source.setCancelHandler {
-                // Cleanup if needed
+                let alreadyResumed = resumed.withLock { r in
+                    if r { return true }
+                    r = true
+                    return false
+                }
+                guard !alreadyResumed else { return }
+                continuation.resume(throwing: SocketError.invalidDescriptor)
             }
 
             source.resume()
@@ -275,8 +303,21 @@ public final class Socket: Sendable {
                 queue: DispatchQueue.global()
             )
 
-            source.setEventHandler { [fd] in
+            let opID = UUID()
+            let resumed = Mutex(false)
+
+            pendingOps.withLock { $0[opID] = PendingOp { source.cancel() } }
+
+            source.setEventHandler { [fd, weak self] in
+                self?.pendingOps.withLock { _ = $0.removeValue(forKey: opID) }
                 source.cancel()
+
+                let alreadyResumed = resumed.withLock { r in
+                    if r { return true }
+                    r = true
+                    return false
+                }
+                guard !alreadyResumed else { return }
 
                 var buffer = [UInt8](repeating: 0, count: maxBytes)
                 let bytesRead = Darwin.recv(fd, &buffer, maxBytes, 0)
@@ -284,11 +325,9 @@ public final class Socket: Sendable {
                 if bytesRead > 0 {
                     continuation.resume(returning: Data(buffer.prefix(bytesRead)))
                 } else if bytesRead == 0 {
-                    // Connection closed gracefully
                     continuation.resume(returning: Data())
                 } else {
                     if errno == EAGAIN || errno == EWOULDBLOCK {
-                        // No data available, return empty
                         continuation.resume(returning: Data())
                     } else {
                         continuation.resume(
@@ -301,7 +340,13 @@ public final class Socket: Sendable {
             }
 
             source.setCancelHandler {
-                // Cleanup if needed
+                let alreadyResumed = resumed.withLock { r in
+                    if r { return true }
+                    r = true
+                    return false
+                }
+                guard !alreadyResumed else { return }
+                continuation.resume(throwing: SocketError.invalidDescriptor)
             }
 
             source.resume()
@@ -340,12 +385,25 @@ public final class Socket: Sendable {
         guard !state.isClosed else { return }
 
         state.isClosed = true
+        cancelAllPendingOps()
         Darwin.close(fd)
 
         // Remove the socket file if we bound to a path
         if let path = state.boundPath {
             unlink(path)
             state.boundPath = nil
+        }
+    }
+
+    /// Cancels all pending dispatch sources so their continuations are resumed.
+    private func cancelAllPendingOps() {
+        let ops = pendingOps.withLock { ops in
+            let snapshot = Array(ops.values)
+            ops.removeAll()
+            return snapshot
+        }
+        for op in ops {
+            op.cancel()
         }
     }
 

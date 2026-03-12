@@ -20,24 +20,24 @@ Built with Swift and Apple's Virtualization.framework — no emulation, just nat
 
 ## Installation
 
+### [Mint](https://github.com/yonaskolb/mint)
+
+```
+mint install subpop/vm
+```
+
 ### Build from Source
 
 ```bash
-git clone https://github.com/yourusername/VM.git
+git clone https://github.com/subpop/VM.git
 cd VM
-swift build -c release
-```
-
-The executable requires virtualization entitlements. Sign it using the included plugin:
-
-```bash
-swift package plugin sign
+make PROFILE=release sign
 ```
 
 Then copy to your PATH:
 
 ```bash
-cp .build/release/vm /usr/local/bin/
+install -m755 .build/release/vm /usr/local/bin/
 ```
 
 ## Quick Start

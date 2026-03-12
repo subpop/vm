@@ -54,17 +54,5 @@ let package = Package(
                 .swiftLanguageMode(.v6)
             ]
         ),
-        .plugin(
-            name: "Sign",
-            capability: .command(
-                intent: .custom(
-                    verb: "sign",
-                    description: "Sign program with virtualization entitlement"
-                ),
-                permissions: [
-                    .writeToPackageDirectory(reason: "Sign the built executable")
-                ]
-            )
-        ),
     ]
 )

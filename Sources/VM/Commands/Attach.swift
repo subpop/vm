@@ -16,7 +16,7 @@ struct Attach: AsyncParsableCommand {
         aliases: ["console"]
     )
 
-    @Argument(help: "Name of the virtual machine to attach to")
+    @Argument(help: "Name of the virtual machine to attach to", completion: VMNameCompletion.kind)
     var name: String
 
     @MainActor

@@ -189,7 +189,10 @@ struct Start: AsyncParsableCommand {
             """
     )
 
-    @Argument(help: "Name of the virtual machine to start")
+    @Argument(
+        help: "Name of the virtual machine to start",
+        completion: VMNameCompletion.kind
+    )
     var name: String
 
     @Flag(name: .shortAndLong, help: "Attach to VM console interactively")

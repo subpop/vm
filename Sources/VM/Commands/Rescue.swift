@@ -93,7 +93,7 @@ struct Rescue: AsyncParsableCommand {
             """
     )
 
-    @Argument(help: "Name of the virtual machine to rescue")
+    @Argument(help: "Name of the virtual machine to rescue", completion: VMNameCompletion.kind)
     var name: String
 
     @Flag(name: .long, help: "Force re-download and setup of rescue VM")

@@ -70,7 +70,7 @@ struct Info: AsyncParsableCommand {
             """
     )
 
-    @Argument(help: "Name of the virtual machine")
+    @Argument(help: "Name of the virtual machine", completion: VMNameCompletion.kind)
     var name: String
 
     @Option(help: "Output format")

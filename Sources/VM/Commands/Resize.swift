@@ -17,7 +17,7 @@ struct Resize: AsyncParsableCommand {
             """
     )
 
-    @Argument(help: "Name of the virtual machine")
+    @Argument(help: "Name of the virtual machine", completion: VMNameCompletion.kind)
     var name: String
 
     @Option(name: .long, help: "New disk size (e.g., 128G, 256G, 512G)")

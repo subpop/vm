@@ -18,7 +18,7 @@ struct Delete: AsyncParsableCommand {
             """
     )
     
-    @Argument(help: "Name of the virtual machine to delete")
+    @Argument(help: "Name of the virtual machine to delete", completion: VMNameCompletion.kind)
     var name: String
     
     @Flag(name: .shortAndLong, help: "Skip confirmation prompt")

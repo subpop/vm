@@ -19,7 +19,7 @@ struct RegenCloudInitISO: AsyncParsableCommand {
         shouldDisplay: false
     )
 
-    @Argument(help: "Name of the virtual machine")
+    @Argument(help: "Name of the virtual machine", completion: VMNameCompletion.kind)
     var name: String
 
     @MainActor

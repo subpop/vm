@@ -17,7 +17,7 @@ struct Stop: AsyncParsableCommand {
             """
     )
     
-    @Argument(help: "Name of the virtual machine to stop")
+    @Argument(help: "Name of the virtual machine to stop", completion: VMNameCompletion.kind)
     var name: String
     
     @Flag(name: .shortAndLong, help: "Force stop the VM immediately")

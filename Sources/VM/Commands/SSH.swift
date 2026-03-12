@@ -23,7 +23,7 @@ struct SSH: AsyncParsableCommand {
         aliases: ["shell", "login", "connect"]
     )
 
-    @Argument(help: "Name of the virtual machine")
+    @Argument(help: "Name of the virtual machine", completion: VMNameCompletion.kind)
     var name: String
 
     @Option(name: [.short, .customLong("user"), .customShort("l")], help: "SSH username")

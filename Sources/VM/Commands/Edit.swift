@@ -16,7 +16,7 @@ struct Edit: AsyncParsableCommand {
             """
     )
 
-    @Argument(help: "Name of the virtual machine")
+    @Argument(help: "Name of the virtual machine", completion: VMNameCompletion.kind)
     var name: String
 
     @Option(name: .long, help: "Number of CPU cores")

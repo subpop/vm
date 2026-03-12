@@ -12,7 +12,7 @@ struct RunDaemon: AsyncParsableCommand {
         shouldDisplay: false  // Hidden from help
     )
 
-    @Argument(help: "Name of the virtual machine to run")
+    @Argument(help: "Name of the virtual machine to run", completion: VMNameCompletion.kind)
     var name: String
 
     @Flag(name: .long, help: "Boot from ISO image (for installation)")

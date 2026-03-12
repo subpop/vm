@@ -126,6 +126,69 @@ This boots a Fedora Cloud rescue system with the target VM's disk attached as `/
 
 On first run, a rescue image is downloaded and set up (~500MB download). The `rescue` use is logged in automatically, however both the `rescue` and `root` user have their passwords set to `rescue`.
 
+## Shell completion
+
+`vm` supports tab-completion for subcommands, options, and VM names. Generate a completion script for your shell and source it (or install it in your shell’s completion directory).
+
+### Generate the script
+
+```bash
+# Auto-detect shell
+vm --generate-completion-script
+
+# Or specify the shell explicitly
+vm --generate-completion-script bash
+vm --generate-completion-script zsh
+vm --generate-completion-script fish
+```
+
+### Bash
+
+Append the generated script to your `~/.bashrc` or load it once:
+
+```bash
+vm --generate-completion-script bash >> ~/.bashrc
+# then start a new shell, or:
+source ~/.bashrc
+```
+
+Or install to a completions directory (e.g. on macOS with Homebrew bash):
+
+```bash
+vm --generate-completion-script bash > $(brew --prefix)/etc/bash_completion.d/vm
+```
+
+### Zsh
+
+Load the script from your `.zshrc`:
+
+```bash
+# Add to ~/.zshrc
+source <(vm --generate-completion-script zsh)
+```
+
+Or install for all users (e.g. into a site-functions directory):
+
+```bash
+vm --generate-completion-script zsh > /usr/local/share/zsh/site-functions/_vm
+```
+
+With oh-my-zsh, put the script in your completions folder:
+
+```bash
+vm --generate-completion-script zsh > ~/.oh-my-zsh/completions/_vm
+```
+
+### Fish
+
+Save the script to Fish’s completions directory:
+
+```bash
+vm --generate-completion-script fish > ~/.config/fish/completions/vm.fish
+```
+
+Start a new shell or run `fish_update_completions` so Fish picks it up.
+
 ## VM Storage
 
 VMs are stored in `~/.vm/` with each VM in its own directory:

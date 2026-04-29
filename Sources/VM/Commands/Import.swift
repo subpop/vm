@@ -44,6 +44,12 @@ struct Import: AsyncParsableCommand {
     @Option(name: .long, help: "Resize disk to this size (e.g., 64G, 128G) - requires --copy")
     var size: String?
 
+    @Option(
+        name: .long,
+        help: "Path to cloud-init user-data YAML to merge with VM defaults"
+    )
+    var cloudInitUserData: String?
+
     mutating func validate() throws {
         // Validate CPU count
         let maxCPUs = ProcessInfo.processInfo.processorCount
@@ -69,6 +75,10 @@ struct Import: AsyncParsableCommand {
         // Validate size format if provided
         if let sizeStr = size {
             _ = try diskManager.parseSize(sizeStr)
+        }
+
+        if let cloudInitUserData {
+            _ = try validateCloudInitUserDataSourcePath(cloudInitUserData)
         }
     }
 
@@ -110,6 +120,12 @@ struct Import: AsyncParsableCommand {
         // Parse memory
         let memoryBytes = try diskManager.parseSize(memory)
 
+        // Validate cloud-init user-data path if provided
+        var cloudInitUserDataSourceURL: URL?
+        if let cloudInitUserData {
+            cloudInitUserDataSourceURL = try validateCloudInitUserDataSourcePath(cloudInitUserData)
+        }
+
         print("Importing disk image as VM '\(name)'...")
         print("  Source: \(sourceURL.path)")
         print("  Format: \(isQcow2 ? "QCOW2" : "Raw")")
@@ -122,12 +138,15 @@ struct Import: AsyncParsableCommand {
         print("  Mode: \(effectiveCopy ? (isQcow2 ? "Convert" : "Copy") : "In-place")")
 
         // Create configuration with target size
+        let cloudInitUserDataStoredPath =
+            cloudInitUserDataSourceURL != nil ? cloudInitUserDataFragmentFileName : nil
         var config = VMConfiguration.create(
             name: name,
             cpuCount: cpus,
             memorySize: memoryBytes,
             diskSize: targetSize,
-            isoPath: nil
+            isoPath: nil,
+            cloudInitUserDataPath: cloudInitUserDataStoredPath
         )
 
         // Ensure base directory exists
@@ -136,6 +155,11 @@ struct Import: AsyncParsableCommand {
         // Create VM directory
         let vmDir = vmManager.vmDirectory(for: name)
         try FileManager.default.createDirectory(at: vmDir, withIntermediateDirectories: true)
+
+        // Copy cloud-init user-data fragment to VM directory
+        if let cloudInitUserDataSourceURL {
+            _ = try copyCloudInitUserDataFragment(from: cloudInitUserDataSourceURL, to: vmDir)
+        }
 
         if effectiveCopy {
             let destPath = vmManager.diskPath(for: name)
@@ -169,11 +193,13 @@ struct Import: AsyncParsableCommand {
         // Generate cloud-init ISO for automatic guest agent configuration
         let sshKeys = readLocalSSHKeys()
         let cloudInitPath = vmManager.cloudInitISOPath(for: name)
+        let userDataFragment = try loadCloudInitUserDataFragment(config: config, manager: vmManager)
         let cloudInitConfiguation = try CloudInitConfiguration.withDefaultPackagesAndCommands(
             instanceID: name,
             hostname: name,
             username: ProcessInfo.processInfo.userName,
-            sshKeys: sshKeys
+            sshKeys: sshKeys,
+            userDataFragment: userDataFragment
         )
         let cloudInitISOGenerator = CloudInitISOGenerator(configuration: cloudInitConfiguation)
         try await cloudInitISOGenerator.generateISO(at: cloudInitPath)

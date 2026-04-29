@@ -39,11 +39,13 @@ struct RegenCloudInitISO: AsyncParsableCommand {
         // Generate cloud-init ISO using the same logic as Create
         let sshKeys = readLocalSSHKeys()
         let cloudInitPath = vmManager.cloudInitISOPath(for: name)
+        let userDataFragment = try loadCloudInitUserDataFragment(config: config, manager: vmManager)
         let cloudInitConfiguration = try CloudInitConfiguration.withDefaultPackagesAndCommands(
             instanceID: config.name,
             hostname: config.name,
             username: ProcessInfo.processInfo.userName,
-            sshKeys: sshKeys
+            sshKeys: sshKeys,
+            userDataFragment: userDataFragment
         )
         let cloudInitISOGenerator = CloudInitISOGenerator(configuration: cloudInitConfiguration)
         try await cloudInitISOGenerator.generateISO(at: cloudInitPath)

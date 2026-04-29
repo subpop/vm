@@ -21,6 +21,9 @@ public struct VMConfiguration: Codable, Sendable {
     /// Optional path to ISO for installation (relative or absolute)
     public var isoPath: String?
 
+    /// Optional path to a cloud-init user-data file (relative or absolute)
+    public var cloudInitUserDataPath: String?
+
     /// MAC address for the network interface
     public var macAddress: String
 
@@ -37,6 +40,7 @@ public struct VMConfiguration: Codable, Sendable {
         case diskImagePath = "disk_image_path"
         case diskSize = "disk_size"
         case isoPath = "iso_path"
+        case cloudInitUserDataPath = "cloud_init_user_data_path"
         case macAddress = "mac_address"
         case createdAt = "created_at"
         case modifiedAt = "modified_at"
@@ -48,7 +52,8 @@ public struct VMConfiguration: Codable, Sendable {
         cpuCount: Int = 2,
         memorySize: UInt64 = 4 * 1024 * 1024 * 1024,  // 4GB
         diskSize: UInt64 = 64 * 1024 * 1024 * 1024,  // 64GB
-        isoPath: String? = nil
+        isoPath: String? = nil,
+        cloudInitUserDataPath: String? = nil
     ) -> VMConfiguration {
         let now = Date()
         return VMConfiguration(
@@ -58,6 +63,7 @@ public struct VMConfiguration: Codable, Sendable {
             diskImagePath: "disk.img",
             diskSize: diskSize,
             isoPath: isoPath,
+            cloudInitUserDataPath: cloudInitUserDataPath,
             macAddress: VMConfiguration.generateMACAddress(),
             createdAt: now,
             modifiedAt: now
@@ -313,6 +319,25 @@ public struct CloudInitConfiguration: Sendable, Codable, Equatable {
     }
 }
 
+/// Errors that can occur while merging user-supplied cloud-init user-data.
+public enum CloudInitConfigurationError: LocalizedError, Sendable {
+    case unsupportedKey(String)
+    case invalidFragment(String)
+    case primaryUserConflict(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unsupportedKey(let key):
+            return "Unsupported cloud-init key in user-data: \(key)"
+        case .invalidFragment(let message):
+            return "Invalid cloud-init user-data: \(message)"
+        case .primaryUserConflict(let username):
+            return
+                "Cloud-init user-data cannot redefine primary user '\(username)'; add different users only"
+        }
+    }
+}
+
 // MARK: - CloudInitConfiguration Factory Methods
 
 extension CloudInitConfiguration {
@@ -368,11 +393,12 @@ extension CloudInitConfiguration {
         instanceID: String,
         hostname: String,
         username: String,
-        sshKeys: [String] = []
+        sshKeys: [String] = [],
+        userDataFragment: String? = nil
     ) throws -> CloudInitConfiguration {
         let metadata = Metadata(localHostname: hostname, instanceID: instanceID)
         let homeDir = "/Users/\(username)"
-        let userdata = CloudConfig(
+        let baseUserData = CloudConfig(
             users: [CloudConfig.User(name: username, sshAuthorizedKeys: sshKeys)],
             hostname: hostname,
             packages: ["qemu-guest-agent"],
@@ -443,7 +469,12 @@ extension CloudInitConfiguration {
                     append: true),
             ])
 
-        return try createCloudInitConfiguration(metadata: metadata, userdata: userdata)
+        let mergedUserData = try mergeUserDataFragmentIfProvided(
+            base: baseUserData,
+            fragmentYAML: userDataFragment
+        )
+
+        return try createCloudInitConfiguration(metadata: metadata, userdata: mergedUserData)
     }
 
     /// Creates a cloud-init configuration for rescue VM setup.
@@ -522,5 +553,175 @@ extension CloudInitConfiguration {
         return CloudInitConfiguration(
             userData: "#cloud-config\n\(try encoder.encode(userdata))",
             metaData: try encoder.encode(metadata))
+    }
+
+    private static let supportedFragmentKeys: Set<String> = [
+        "users",
+        "bootcmd",
+        "packages",
+        "runcmd",
+        "write_files",
+    ]
+
+    private struct CloudConfigFragment: Decodable {
+        struct FragmentUser: Decodable {
+            let name: String
+            let groups: String?
+            let sshAuthorizedKeys: [String]?
+            let lockPasswd: Bool?
+            let passwd: String?
+
+            enum CodingKeys: String, CodingKey {
+                case name
+                case groups
+                case sshAuthorizedKeys = "ssh_authorized_keys"
+                case lockPasswd = "lock_passwd"
+                case passwd
+            }
+
+            var asCloudConfigUser: CloudConfig.User {
+                CloudConfig.User(
+                    name: name,
+                    groups: groups,
+                    sshAuthorizedKeys: sshAuthorizedKeys ?? [],
+                    lockPasswd: lockPasswd,
+                    passwd: passwd
+                )
+            }
+        }
+
+        struct FragmentFileInfo: Decodable {
+            let encoding: String?
+            let content: String
+            let owner: String?
+            let path: String
+            let permissions: String?
+            let append: Bool?
+
+            enum CodingKeys: String, CodingKey {
+                case encoding
+                case content
+                case owner
+                case path
+                case permissions
+                case append
+            }
+
+            var asCloudConfigFileInfo: CloudConfig.FileInfo {
+                var fileInfo = CloudConfig.FileInfo(content: content, path: path)
+                if let encoding {
+                    fileInfo.encoding = encoding
+                }
+                if let owner {
+                    fileInfo.owner = owner
+                }
+                if let permissions {
+                    fileInfo.permissions = permissions
+                }
+                if let append {
+                    fileInfo.append = append
+                }
+                return fileInfo
+            }
+        }
+
+        let users: [FragmentUser]?
+        let bootcmd: [String]?
+        let packages: [String]?
+        let runcmd: [String]?
+        let writeFiles: [FragmentFileInfo]?
+
+        enum CodingKeys: String, CodingKey {
+            case users
+            case bootcmd
+            case packages
+            case runcmd
+            case writeFiles = "write_files"
+        }
+    }
+
+    private static func mergeUserDataFragmentIfProvided(base: CloudConfig, fragmentYAML: String?)
+        throws -> CloudConfig
+    {
+        guard let fragmentYAML,
+            !fragmentYAML.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return base
+        }
+
+        let normalizedFragment = stripCloudConfigHeader(from: fragmentYAML)
+        try validateFragmentKeys(in: normalizedFragment)
+
+        let decoder = YAMLDecoder()
+        let fragment: CloudConfigFragment
+        do {
+            fragment = try decoder.decode(CloudConfigFragment.self, from: normalizedFragment)
+        } catch {
+            throw CloudInitConfigurationError.invalidFragment(error.localizedDescription)
+        }
+
+        let primaryUser = base.users.first?.name
+        if let primaryUser,
+            let fragmentUsers = fragment.users,
+            fragmentUsers.contains(where: { $0.name == primaryUser })
+        {
+            throw CloudInitConfigurationError.primaryUserConflict(primaryUser)
+        }
+
+        let mergedUsers = base.users + (fragment.users?.map(\.asCloudConfigUser) ?? [])
+        let mergedWriteFiles =
+            base.writeFiles + (fragment.writeFiles?.map(\.asCloudConfigFileInfo) ?? [])
+
+        return CloudConfig(
+            users: mergedUsers,
+            hostname: base.hostname,
+            chpasswd: base.chpasswd,
+            sshPwauth: base.sshPwauth,
+            bootcmd: mergeOptionalArrays(base.bootcmd, fragment.bootcmd),
+            packageUpdate: base.packageUpdate,
+            packageUpgrade: base.packageUpgrade,
+            packages: base.packages + (fragment.packages ?? []),
+            runcmd: base.runcmd + (fragment.runcmd ?? []),
+            writeFiles: mergedWriteFiles
+        )
+    }
+
+    private static func validateFragmentKeys(in yaml: String) throws {
+        guard let raw = try Yams.load(yaml: yaml) else {
+            return
+        }
+        guard let dictionary = raw as? [String: Any] else {
+            throw CloudInitConfigurationError.invalidFragment(
+                "user-data must be a YAML mapping (cloud-config object)"
+            )
+        }
+
+        for key in dictionary.keys where !supportedFragmentKeys.contains(key) {
+            throw CloudInitConfigurationError.unsupportedKey(key)
+        }
+    }
+
+    private static func stripCloudConfigHeader(from yaml: String) -> String {
+        var lines = yaml.components(separatedBy: .newlines)
+        while let first = lines.first, first.trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.removeFirst()
+        }
+        if let first = lines.first, first.trimmingCharacters(in: .whitespaces) == "#cloud-config" {
+            lines.removeFirst()
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func mergeOptionalArrays<T>(_ base: [T]?, _ extra: [T]?) -> [T]? {
+        switch (base, extra) {
+        case (nil, nil):
+            return nil
+        case (let lhs?, nil):
+            return lhs
+        case (nil, let rhs?):
+            return rhs
+        case (let lhs?, let rhs?):
+            return lhs + rhs
+        }
     }
 }

@@ -141,4 +141,83 @@ struct CloudInitConfigurationTests {
         #expect((fstabFile?["content"] as? String)?.contains("virtiofs") == true)
         #expect(fstabFile?["append"] as? Bool == true)
     }
+
+    @Test("withDefaultPackagesAndCommands merges user-data lists and users")
+    func withDefaultPackagesAndCommandsMergesUserDataFragment() throws {
+        let config = try CloudInitConfiguration.withDefaultPackagesAndCommands(
+            instanceID: "merged-instance",
+            hostname: "merged-host",
+            username: "primaryuser",
+            sshKeys: [],
+            userDataFragment: """
+                #cloud-config
+                users:
+                  - name: extrauser
+                packages:
+                  - jq
+                runcmd:
+                  - echo custom-command
+                bootcmd:
+                  - echo early-boot
+                write_files:
+                  - path: /tmp/custom.txt
+                    content: custom content
+                """
+        )
+
+        let userDataYaml = String(config.userData.dropFirst("#cloud-config\n".count))
+        let userData = try Yams.load(yaml: userDataYaml) as! [String: Any]
+
+        let users = userData["users"] as! [[String: Any]]
+        #expect(users.count == 2)
+        #expect(users[0]["name"] as? String == "primaryuser")
+        #expect(users[1]["name"] as? String == "extrauser")
+
+        let packages = userData["packages"] as? [String]
+        #expect(packages == ["qemu-guest-agent", "jq"])
+
+        let runcmd = userData["runcmd"] as? [String]
+        #expect(runcmd?.count == 4)
+        #expect(runcmd?.last == "echo custom-command")
+
+        let bootcmd = userData["bootcmd"] as? [String]
+        #expect(bootcmd == ["echo early-boot"])
+
+        let writeFiles = userData["write_files"] as! [[String: Any]]
+        #expect(writeFiles.count == 4)
+        let customFile = writeFiles.first { $0["path"] as? String == "/tmp/custom.txt" }
+        #expect(customFile != nil)
+        #expect(customFile?["content"] as? String == "custom content")
+    }
+
+    @Test("withDefaultPackagesAndCommands rejects unsupported user-data keys")
+    func withDefaultPackagesAndCommandsRejectsUnsupportedKeys() {
+        #expect(throws: CloudInitConfigurationError.self) {
+            _ = try CloudInitConfiguration.withDefaultPackagesAndCommands(
+                instanceID: "bad-instance",
+                hostname: "bad-host",
+                username: "baduser",
+                sshKeys: [],
+                userDataFragment: """
+                    hostname: override-not-allowed
+                    """
+            )
+        }
+    }
+
+    @Test("withDefaultPackagesAndCommands rejects primary user redefinition")
+    func withDefaultPackagesAndCommandsRejectsPrimaryUserConflict() {
+        #expect(throws: CloudInitConfigurationError.self) {
+            _ = try CloudInitConfiguration.withDefaultPackagesAndCommands(
+                instanceID: "conflict-instance",
+                hostname: "conflict-host",
+                username: "primaryuser",
+                sshKeys: [],
+                userDataFragment: """
+                    users:
+                      - name: primaryuser
+                    """
+            )
+        }
+    }
 }

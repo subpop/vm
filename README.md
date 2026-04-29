@@ -215,6 +215,26 @@ VMs are automatically provisioned with cloud-init:
 - **Guest Agent** — Installed automatically for network info reporting
 - **Home Directory** - Automatically mounted into guest using virtiofsd
 
+You can also augment the generated cloud-init `user-data` with your own user-data file:
+
+```bash
+vm create ubuntu --cloud-init-user-data ~/my-cloud-init.yaml
+vm import ubuntu --disk ~/VMs/ubuntu.img --cloud-init-user-data ~/my-cloud-init.yaml
+```
+
+Fragment merge rules:
+
+- The default generated user is always kept as the first user.
+- `users`, `bootcmd`, `packages`, `runcmd`, and `write_files` are appended from your user-data.
+- Other top-level keys are rejected to keep required VM defaults intact.
+
+If you update your user-data after VM creation, copy it into `~/.vm/<name>/cloud-init.user-data.yaml` and
+regenerate the ISO:
+
+```bash
+vm regen-cloud-init-iso ubuntu
+```
+
 After the VM boots with cloud-init support, you can SSH directly:
 
 ```bash

@@ -31,6 +31,12 @@ struct Create: AsyncParsableCommand {
     @Option(name: .long, help: "Memory size (e.g., 4G, 8G, 16G)")
     var memory: String = "4G"
 
+    @Option(
+        name: .long,
+        help: "Path to cloud-init user-data YAML to merge with VM defaults"
+    )
+    var cloudInitUserData: String?
+
     @Flag(name: .shortAndLong, help: "Start the VM immediately after creation in interactive mode")
     var interactive: Bool = false
 
@@ -55,6 +61,10 @@ struct Create: AsyncParsableCommand {
         guard memoryBytes >= minMemory && memoryBytes <= maxMemory else {
             throw ValidationError(
                 "Memory must be between 512MB and \(diskManager.formatSize(maxMemory))")
+        }
+
+        if let cloudInitUserData {
+            _ = try validateCloudInitUserDataSourcePath(cloudInitUserData)
         }
     }
 
@@ -82,13 +92,22 @@ struct Create: AsyncParsableCommand {
             resolvedISOPath = isoURL.path
         }
 
+        // Validate cloud-init user-data path if provided
+        var cloudInitUserDataSourceURL: URL?
+        if let cloudInitUserData {
+            cloudInitUserDataSourceURL = try validateCloudInitUserDataSourcePath(cloudInitUserData)
+        }
+
         // Create configuration
+        let cloudInitUserDataStoredPath =
+            cloudInitUserDataSourceURL != nil ? cloudInitUserDataFragmentFileName : nil
         let config = VMConfiguration.create(
             name: name,
             cpuCount: cpus,
             memorySize: memoryBytes,
             diskSize: diskBytes,
-            isoPath: resolvedISOPath
+            isoPath: resolvedISOPath,
+            cloudInitUserDataPath: cloudInitUserDataStoredPath
         )
 
         print("Creating VM '\(name)'...")
@@ -102,6 +121,14 @@ struct Create: AsyncParsableCommand {
         // Create VM directory and save config
         try vmManager.createVM(config)
 
+        // Copy cloud-init user-data fragment to VM directory
+        if let cloudInitUserDataSourceURL {
+            _ = try copyCloudInitUserDataFragment(
+                from: cloudInitUserDataSourceURL,
+                to: vmManager.vmDirectory(for: name)
+            )
+        }
+
         // Create disk image
         let diskPath = vmManager.diskPath(for: name)
         try diskManager.createDiskImage(at: diskPath, size: diskBytes)
@@ -109,9 +136,12 @@ struct Create: AsyncParsableCommand {
         // Generate cloud-init ISO for automatic guest agent configuration
         let sshKeys = readLocalSSHKeys()
         let cloudInitPath = vmManager.cloudInitISOPath(for: name)
+        let userDataFragment = try loadCloudInitUserDataFragment(config: config, manager: vmManager)
         let cloudInitConfiguation = try CloudInitConfiguration.withDefaultPackagesAndCommands(
             instanceID: name, hostname: name, username: ProcessInfo.processInfo.userName,
-            sshKeys: sshKeys)
+            sshKeys: sshKeys,
+            userDataFragment: userDataFragment
+        )
         let cloudInitISOGenerator = CloudInitISOGenerator(configuration: cloudInitConfiguation)
         try await cloudInitISOGenerator.generateISO(at: cloudInitPath)
 

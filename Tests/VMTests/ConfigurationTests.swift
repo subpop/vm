@@ -99,6 +99,7 @@ struct CloudInitConfigurationTests {
         #expect(runcmd?[1].contains("daemon-reload") == true)
         // Third command creates mount point and mounts
         #expect(runcmd?[2].contains("mkdir -p") == true)
+        #expect(runcmd?[2].contains("/var/host/Users/defaultuser") == true)
         #expect(runcmd?[2].contains("mount -a") == true)
 
         // Verify write_files array (snake_case key)
@@ -139,6 +140,7 @@ struct CloudInitConfigurationTests {
         #expect(fstabFile != nil)
         #expect((fstabFile?["content"] as? String)?.contains("hostHome") == true)
         #expect((fstabFile?["content"] as? String)?.contains("virtiofs") == true)
+        #expect((fstabFile?["content"] as? String)?.contains("/var/host/Users/defaultuser") == true)
         #expect(fstabFile?["append"] as? Bool == true)
     }
 

@@ -397,7 +397,7 @@ extension CloudInitConfiguration {
         userDataFragment: String? = nil
     ) throws -> CloudInitConfiguration {
         let metadata = Metadata(localHostname: hostname, instanceID: instanceID)
-        let homeDir = "/Users/\(username)"
+        let homeDir = "/var/host/Users/\(username)"
         let baseUserData = CloudConfig(
             users: [CloudConfig.User(name: username, sshAuthorizedKeys: sshKeys)],
             hostname: hostname,

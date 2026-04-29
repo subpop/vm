@@ -160,6 +160,39 @@ public struct VMNetworkInfo: Codable, Sendable {
 }
 
 public struct CloudConfig: Codable, Sendable {
+    /// One `runcmd` entry in cloud-init user-data: a shell string or an argv list (no shell).
+    public enum RuncmdEntry: Codable, Sendable, Equatable {
+        case shell(String)
+        case argv([String])
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if let s = try? c.decode(String.self) {
+                self = .shell(s)
+                return
+            }
+            if let a = try? c.decode([String].self) {
+                self = .argv(a)
+                return
+            }
+            throw DecodingError.typeMismatch(
+                RuncmdEntry.self,
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "runcmd entry must be a string or a list of strings"))
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.singleValueContainer()
+            switch self {
+            case .shell(let s):
+                try c.encode(s)
+            case .argv(let a):
+                try c.encode(a)
+            }
+        }
+    }
+
     public struct User: Codable, Sendable {
         public let name: String
         public let groups: String?
@@ -235,7 +268,7 @@ public struct CloudConfig: Codable, Sendable {
     public let packageUpdate: Bool
     public let packageUpgrade: Bool
     public let packages: [String]
-    public let runcmd: [String]
+    public let runcmd: [RuncmdEntry]
     public let writeFiles: [FileInfo]
 
     public init(
@@ -247,7 +280,7 @@ public struct CloudConfig: Codable, Sendable {
         packageUpdate: Bool = false,
         packageUpgrade: Bool = false,
         packages: [String] = [],
-        runcmd: [String] = [],
+        runcmd: [RuncmdEntry] = [],
         writeFiles: [FileInfo] = []
     ) {
         self.users = users
@@ -273,6 +306,171 @@ public struct CloudConfig: Codable, Sendable {
         case packages
         case runcmd
         case writeFiles = "write_files"
+    }
+}
+
+// MARK: - User-supplied cloud-config (merge input)
+
+/// Decodes a user `cloud-config` YAML file into the same logical shape as ``CloudConfig`` for the
+/// fields we support. Every property is optional; omitted keys are treated as empty for merge.
+///
+/// Flow: normalize YAML → validate allowed top-level keys → decode → ``mergeUserSuppliedCloudConfig(into:)``.
+private struct CloudConfigMergeInput: Decodable {
+    struct User: Decodable {
+        let name: String
+        let groups: String?
+        let sshAuthorizedKeys: [String]?
+        let lockPasswd: Bool?
+        let passwd: String?
+
+        enum CodingKeys: String, CodingKey {
+            case name
+            case groups
+            case sshAuthorizedKeys = "ssh_authorized_keys"
+            case lockPasswd = "lock_passwd"
+            case passwd
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try c.decode(String.self, forKey: .name)
+            groups = try Self.decodeOptionalGroups(from: c)
+            sshAuthorizedKeys = try Self.decodeOptionalSSHKeys(from: c)
+            lockPasswd = try c.decodeIfPresent(Bool.self, forKey: .lockPasswd)
+            passwd = try c.decodeIfPresent(String.self, forKey: .passwd)
+        }
+
+        private static func decodeOptionalGroups(from c: KeyedDecodingContainer<CodingKeys>) throws
+            -> String?
+        {
+            guard c.contains(.groups) else { return nil }
+            if let s = try? c.decode(String.self, forKey: .groups) {
+                return s
+            }
+            if let parts = try? c.decode([String].self, forKey: .groups) {
+                return parts.joined(separator: ",")
+            }
+            throw DecodingError.typeMismatch(
+                String.self,
+                .init(
+                    codingPath: c.codingPath + [CodingKeys.groups],
+                    debugDescription: "groups must be a string or a list of strings"))
+        }
+
+        private static func decodeOptionalSSHKeys(from c: KeyedDecodingContainer<CodingKeys>) throws
+            -> [String]?
+        {
+            guard c.contains(.sshAuthorizedKeys) else { return nil }
+            if let keys = try? c.decode([String].self, forKey: .sshAuthorizedKeys) {
+                return keys
+            }
+            if let single = try? c.decode(String.self, forKey: .sshAuthorizedKeys) {
+                return [single]
+            }
+            throw DecodingError.typeMismatch(
+                [String].self,
+                .init(
+                    codingPath: c.codingPath + [CodingKeys.sshAuthorizedKeys],
+                    debugDescription: "ssh_authorized_keys must be a string or a list of strings"))
+        }
+
+        func asCloudConfigUser() -> CloudConfig.User {
+            CloudConfig.User(
+                name: name,
+                groups: groups,
+                sshAuthorizedKeys: sshAuthorizedKeys ?? [],
+                lockPasswd: lockPasswd,
+                passwd: passwd
+            )
+        }
+    }
+
+    struct FileInfo: Decodable {
+        let encoding: String?
+        let content: String
+        let owner: String?
+        let path: String
+        let permissions: String?
+        let append: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case encoding
+            case content
+            case owner
+            case path
+            case permissions
+            case append
+        }
+
+        func asCloudConfigFileInfo() -> CloudConfig.FileInfo {
+            var fileInfo = CloudConfig.FileInfo(content: content, path: path)
+            if let encoding {
+                fileInfo.encoding = encoding
+            }
+            if let owner {
+                fileInfo.owner = owner
+            }
+            if let permissions {
+                fileInfo.permissions = permissions
+            }
+            if let append {
+                fileInfo.append = append
+            }
+            return fileInfo
+        }
+    }
+
+    let users: [User]?
+    let bootcmd: [String]?
+    let packages: [String]?
+    let runcmd: [CloudConfig.RuncmdEntry]?
+    let writeFiles: [FileInfo]?
+
+    enum CodingKeys: String, CodingKey {
+        case users
+        case bootcmd
+        case packages
+        case runcmd
+        case writeFiles = "write_files"
+    }
+
+    /// Merge policy: append list fields to `base`; keep `base` hostname, chpasswd, ssh_pwauth, package_update flags.
+    func merged(into base: CloudConfig, primaryUserConflictWith primaryUser: String?) throws -> CloudConfig {
+        if let primaryUser,
+            let fragmentUsers = users,
+            fragmentUsers.contains(where: { $0.name == primaryUser })
+        {
+            throw CloudInitConfigurationError.primaryUserConflict(primaryUser)
+        }
+
+        let mergedUsers = base.users + (users?.map { $0.asCloudConfigUser() } ?? [])
+        let mergedWriteFiles = base.writeFiles + (writeFiles?.map { $0.asCloudConfigFileInfo() } ?? [])
+
+        return CloudConfig(
+            users: mergedUsers,
+            hostname: base.hostname,
+            chpasswd: base.chpasswd,
+            sshPwauth: base.sshPwauth,
+            bootcmd: CloudConfigMergeInput.mergeOptionalArrays(base.bootcmd, bootcmd),
+            packageUpdate: base.packageUpdate,
+            packageUpgrade: base.packageUpgrade,
+            packages: base.packages + (packages ?? []),
+            runcmd: base.runcmd + (runcmd ?? []),
+            writeFiles: mergedWriteFiles
+        )
+    }
+
+    private static func mergeOptionalArrays<T>(_ base: [T]?, _ extra: [T]?) -> [T]? {
+        switch (base, extra) {
+        case (nil, nil):
+            return nil
+        case (let lhs?, nil):
+            return lhs
+        case (nil, let rhs?):
+            return rhs
+        case (let lhs?, let rhs?):
+            return lhs + rhs
+        }
     }
 }
 
@@ -384,7 +582,7 @@ extension CloudInitConfiguration {
         let userdata = CloudConfig(
             users: [CloudConfig.User(name: username, sshAuthorizedKeys: sshKeys)],
             hostname: hostname, packageUpdate: !packages.isEmpty, packageUpgrade: !packages.isEmpty,
-            packages: packages, runcmd: runCommands)
+            packages: packages, runcmd: runCommands.map { .shell($0) })
 
         return try createCloudInitConfiguration(metadata: metadata, userdata: userdata)
     }
@@ -404,28 +602,32 @@ extension CloudInitConfiguration {
             packages: ["qemu-guest-agent"],
             runcmd: [
                 // Install SELinux policy tools and compile policy (only if SELinux is present)
-                """
-                if command -v semodule >/dev/null 2>&1 && [ -f /etc/selinux/qemu-vsock.te ]; then
-                  if command -v dnf >/dev/null 2>&1; then dnf install -y checkpolicy 2>/dev/null || true
-                  elif command -v yum >/dev/null 2>&1; then yum install -y checkpolicy 2>/dev/null || true
-                  elif command -v apt-get >/dev/null 2>&1; then apt-get install -y checkpolicy 2>/dev/null || true
-                  fi
-                  if command -v checkmodule >/dev/null 2>&1; then
-                    checkmodule -M -m -o /tmp/qemu-vsock.mod /etc/selinux/qemu-vsock.te && \
-                    semodule_package -o /tmp/qemu-vsock.pp -m /tmp/qemu-vsock.mod && \
-                    semodule -i /tmp/qemu-vsock.pp
-                  fi
-                fi
-                """,
+                .shell(
+                    """
+                    if command -v semodule >/dev/null 2>&1 && [ -f /etc/selinux/qemu-vsock.te ]; then
+                      if command -v dnf >/dev/null 2>&1; then dnf install -y checkpolicy 2>/dev/null || true
+                      elif command -v yum >/dev/null 2>&1; then yum install -y checkpolicy 2>/dev/null || true
+                      elif command -v apt-get >/dev/null 2>&1; then apt-get install -y checkpolicy 2>/dev/null || true
+                      fi
+                      if command -v checkmodule >/dev/null 2>&1; then
+                        checkmodule -M -m -o /tmp/qemu-vsock.mod /etc/selinux/qemu-vsock.te && \
+                        semodule_package -o /tmp/qemu-vsock.pp -m /tmp/qemu-vsock.mod && \
+                        semodule -i /tmp/qemu-vsock.pp
+                      fi
+                    fi
+                    """
+                ),
                 // Enable and start guest agent
-                """
-                if command -v systemctl >/dev/null 2>&1; then
-                  systemctl daemon-reload
-                  systemctl enable --now qemu-guest-agent
-                fi
-                """,
+                .shell(
+                    """
+                    if command -v systemctl >/dev/null 2>&1; then
+                      systemctl daemon-reload
+                      systemctl enable --now qemu-guest-agent
+                    fi
+                    """
+                ),
                 // Create mount point and mount host home directory
-                "mkdir -p \(homeDir) && mount -a",
+                .shell("mkdir -p \(homeDir) && mount -a"),
             ],
             writeFiles: [
                 // SELinux policy to allow qemu-ga to use vsock (ignored on non-SELinux systems)
@@ -505,10 +707,10 @@ extension CloudInitConfiguration {
                 "mkdir -p /etc/systemd/system/serial-getty@hvc0.service.d"
             ],
             runcmd: [
-                "systemctl daemon-reload",
-                "systemctl enable serial-getty@hvc0.service",
-                "systemctl restart serial-getty@hvc0.service",
-                "touch /etc/cloud/cloud-init.disabled",
+                .shell("systemctl daemon-reload"),
+                .shell("systemctl enable serial-getty@hvc0.service"),
+                .shell("systemctl restart serial-getty@hvc0.service"),
+                .shell("touch /etc/cloud/cloud-init.disabled"),
             ],
             writeFiles: [
                 CloudConfig.FileInfo(
@@ -555,90 +757,13 @@ extension CloudInitConfiguration {
             metaData: try encoder.encode(metadata))
     }
 
-    private static let supportedFragmentKeys: Set<String> = [
+    private static let supportedMergeInputKeys: Set<String> = [
         "users",
         "bootcmd",
         "packages",
         "runcmd",
         "write_files",
     ]
-
-    private struct CloudConfigFragment: Decodable {
-        struct FragmentUser: Decodable {
-            let name: String
-            let groups: String?
-            let sshAuthorizedKeys: [String]?
-            let lockPasswd: Bool?
-            let passwd: String?
-
-            enum CodingKeys: String, CodingKey {
-                case name
-                case groups
-                case sshAuthorizedKeys = "ssh_authorized_keys"
-                case lockPasswd = "lock_passwd"
-                case passwd
-            }
-
-            var asCloudConfigUser: CloudConfig.User {
-                CloudConfig.User(
-                    name: name,
-                    groups: groups,
-                    sshAuthorizedKeys: sshAuthorizedKeys ?? [],
-                    lockPasswd: lockPasswd,
-                    passwd: passwd
-                )
-            }
-        }
-
-        struct FragmentFileInfo: Decodable {
-            let encoding: String?
-            let content: String
-            let owner: String?
-            let path: String
-            let permissions: String?
-            let append: Bool?
-
-            enum CodingKeys: String, CodingKey {
-                case encoding
-                case content
-                case owner
-                case path
-                case permissions
-                case append
-            }
-
-            var asCloudConfigFileInfo: CloudConfig.FileInfo {
-                var fileInfo = CloudConfig.FileInfo(content: content, path: path)
-                if let encoding {
-                    fileInfo.encoding = encoding
-                }
-                if let owner {
-                    fileInfo.owner = owner
-                }
-                if let permissions {
-                    fileInfo.permissions = permissions
-                }
-                if let append {
-                    fileInfo.append = append
-                }
-                return fileInfo
-            }
-        }
-
-        let users: [FragmentUser]?
-        let bootcmd: [String]?
-        let packages: [String]?
-        let runcmd: [String]?
-        let writeFiles: [FragmentFileInfo]?
-
-        enum CodingKeys: String, CodingKey {
-            case users
-            case bootcmd
-            case packages
-            case runcmd
-            case writeFiles = "write_files"
-        }
-    }
 
     private static func mergeUserDataFragmentIfProvided(base: CloudConfig, fragmentYAML: String?)
         throws -> CloudConfig
@@ -649,44 +774,23 @@ extension CloudInitConfiguration {
             return base
         }
 
-        let normalizedFragment = stripCloudConfigHeader(from: fragmentYAML)
-        try validateFragmentKeys(in: normalizedFragment)
+        let normalizedYAML = stripCloudConfigHeader(from: fragmentYAML)
+        try validateMergeInputKeys(in: normalizedYAML)
 
-        let decoder = YAMLDecoder()
-        let fragment: CloudConfigFragment
+        let mergeInput: CloudConfigMergeInput
         do {
-            fragment = try decoder.decode(CloudConfigFragment.self, from: normalizedFragment)
+            mergeInput = try YAMLDecoder().decode(CloudConfigMergeInput.self, from: normalizedYAML)
         } catch {
-            throw CloudInitConfigurationError.invalidFragment(error.localizedDescription)
+            throw CloudInitConfigurationError.invalidFragment(
+                Self.mergeInputDecodeErrorDescription(error))
         }
 
-        let primaryUser = base.users.first?.name
-        if let primaryUser,
-            let fragmentUsers = fragment.users,
-            fragmentUsers.contains(where: { $0.name == primaryUser })
-        {
-            throw CloudInitConfigurationError.primaryUserConflict(primaryUser)
-        }
-
-        let mergedUsers = base.users + (fragment.users?.map(\.asCloudConfigUser) ?? [])
-        let mergedWriteFiles =
-            base.writeFiles + (fragment.writeFiles?.map(\.asCloudConfigFileInfo) ?? [])
-
-        return CloudConfig(
-            users: mergedUsers,
-            hostname: base.hostname,
-            chpasswd: base.chpasswd,
-            sshPwauth: base.sshPwauth,
-            bootcmd: mergeOptionalArrays(base.bootcmd, fragment.bootcmd),
-            packageUpdate: base.packageUpdate,
-            packageUpgrade: base.packageUpgrade,
-            packages: base.packages + (fragment.packages ?? []),
-            runcmd: base.runcmd + (fragment.runcmd ?? []),
-            writeFiles: mergedWriteFiles
-        )
+        return try mergeInput.merged(
+            into: base,
+            primaryUserConflictWith: base.users.first?.name)
     }
 
-    private static func validateFragmentKeys(in yaml: String) throws {
+    private static func validateMergeInputKeys(in yaml: String) throws {
         guard let raw = try Yams.load(yaml: yaml) else {
             return
         }
@@ -696,7 +800,7 @@ extension CloudInitConfiguration {
             )
         }
 
-        for key in dictionary.keys where !supportedFragmentKeys.contains(key) {
+        for key in dictionary.keys where !supportedMergeInputKeys.contains(key) {
             throw CloudInitConfigurationError.unsupportedKey(key)
         }
     }
@@ -712,16 +816,26 @@ extension CloudInitConfiguration {
         return lines.joined(separator: "\n")
     }
 
-    private static func mergeOptionalArrays<T>(_ base: [T]?, _ extra: [T]?) -> [T]? {
-        switch (base, extra) {
-        case (nil, nil):
-            return nil
-        case (let lhs?, nil):
-            return lhs
-        case (nil, let rhs?):
-            return rhs
-        case (let lhs?, let rhs?):
-            return lhs + rhs
+    private static func mergeInputDecodeErrorDescription(_ error: Error) -> String {
+        guard let decodingError = error as? DecodingError else {
+            return error.localizedDescription
         }
+        switch decodingError {
+        case .keyNotFound(let key, let context):
+            return "missing key \"\(key.stringValue)\" (\(context.debugDescription))"
+        case .typeMismatch(_, let context):
+            return
+                "wrong type at \(mergeInputCodingPathDescription(context.codingPath)): \(context.debugDescription)"
+        case .valueNotFound(_, let context):
+            return "missing value at \(mergeInputCodingPathDescription(context.codingPath)): \(context.debugDescription)"
+        case .dataCorrupted(let context):
+            return context.debugDescription
+        @unknown default:
+            return String(describing: decodingError)
+        }
+    }
+
+    private static func mergeInputCodingPathDescription(_ path: [CodingKey]) -> String {
+        path.map(\.stringValue).joined(separator: ".")
     }
 }

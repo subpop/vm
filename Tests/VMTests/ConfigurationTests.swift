@@ -138,9 +138,10 @@ struct CloudInitConfigurationTests {
         // Find fstab entry file
         let fstabFile = writeFiles.first { $0["path"] as? String == "/etc/fstab" }
         #expect(fstabFile != nil)
-        #expect((fstabFile?["content"] as? String)?.contains("hostHome") == true)
-        #expect((fstabFile?["content"] as? String)?.contains("virtiofs") == true)
-        #expect((fstabFile?["content"] as? String)?.contains("/var/host/Users/defaultuser") == true)
+        let fstabContent = fstabFile?["content"] as? String
+        #expect(fstabContent?.contains("hostHome") == true)
+        #expect(fstabContent?.contains("virtiofs") == true)
+        #expect(fstabContent?.contains("/var/host/Users/defaultuser") == true)
         #expect(fstabFile?["append"] as? Bool == true)
     }
 
@@ -178,9 +179,9 @@ struct CloudInitConfigurationTests {
         let packages = userData["packages"] as? [String]
         #expect(packages == ["qemu-guest-agent", "jq"])
 
-        let runcmd = userData["runcmd"] as? [String]
+        let runcmd = userData["runcmd"] as? [Any]
         #expect(runcmd?.count == 4)
-        #expect(runcmd?.last == "echo custom-command")
+        #expect(runcmd?.last as? String == "echo custom-command")
 
         let bootcmd = userData["bootcmd"] as? [String]
         #expect(bootcmd == ["echo early-boot"])
@@ -221,5 +222,73 @@ struct CloudInitConfigurationTests {
                     """
             )
         }
+    }
+
+    @Test("withDefaultPackagesAndCommands accepts ssh_authorized_keys as a single string")
+    func withDefaultPackagesAndCommandsMergesSSHKeysAsScalarString() throws {
+        let config = try CloudInitConfiguration.withDefaultPackagesAndCommands(
+            instanceID: "scalar-keys",
+            hostname: "scalar-host",
+            username: "primaryuser",
+            sshKeys: [],
+            userDataFragment: """
+                users:
+                  - name: extrauser
+                    ssh_authorized_keys: |
+                      ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC test-key
+                """
+        )
+
+        let userDataYaml = String(config.userData.dropFirst("#cloud-config\n".count))
+        let userData = try Yams.load(yaml: userDataYaml) as! [String: Any]
+        let users = userData["users"] as! [[String: Any]]
+        #expect(users.count == 2)
+        #expect(users[1]["name"] as? String == "extrauser")
+        let keys = users[1]["ssh_authorized_keys"] as? [String]
+        #expect(keys?.count == 1)
+        #expect((keys?.first)?.contains("ssh-rsa") == true)
+    }
+
+    @Test("withDefaultPackagesAndCommands accepts users.groups as a list of strings")
+    func withDefaultPackagesAndCommandsMergesGroupsAsList() throws {
+        let config = try CloudInitConfiguration.withDefaultPackagesAndCommands(
+            instanceID: "groups-list",
+            hostname: "groups-host",
+            username: "primaryuser",
+            sshKeys: [],
+            userDataFragment: """
+                users:
+                  - name: extrauser
+                    groups: [wheel, systemd-journal]
+                """
+        )
+
+        let userDataYaml = String(config.userData.dropFirst("#cloud-config\n".count))
+        let userData = try Yams.load(yaml: userDataYaml) as! [String: Any]
+        let users = userData["users"] as! [[String: Any]]
+        #expect(users[1]["groups"] as? String == "wheel,systemd-journal")
+    }
+
+    @Test("withDefaultPackagesAndCommands accepts runcmd argv lists (cloud-init list form)")
+    func withDefaultPackagesAndCommandsMergesRuncmdArgvLists() throws {
+        let config = try CloudInitConfiguration.withDefaultPackagesAndCommands(
+            instanceID: "runcmd-argv",
+            hostname: "argv-host",
+            username: "primaryuser",
+            sshKeys: [],
+            userDataFragment: """
+                runcmd:
+                  - [dnf, install, "-y", jq]
+                  - echo done
+                """
+        )
+
+        let userDataYaml = String(config.userData.dropFirst("#cloud-config\n".count))
+        let userData = try Yams.load(yaml: userDataYaml) as! [String: Any]
+        let runcmd = userData["runcmd"] as? [Any]
+        #expect(runcmd?.count == 5)
+        let argvEntry = runcmd?[3] as? [String]
+        #expect(argvEntry == ["dnf", "install", "-y", "jq"])
+        #expect(runcmd?.last as? String == "echo done")
     }
 }

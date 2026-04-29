@@ -599,8 +599,20 @@ extension CloudInitConfiguration {
         let baseUserData = CloudConfig(
             users: [CloudConfig.User(name: username, sshAuthorizedKeys: sshKeys)],
             hostname: hostname,
-            packages: ["qemu-guest-agent"],
+            packages: [],
             runcmd: [
+                .shell(
+                    """
+                    if ! command -v qemu-ga >/dev/null 2>&1; then
+                      if [ ! -f /run/ostree-booted ]; then
+                        if command -v dnf >/dev/null 2>&1; then dnf install -y qemu-guest-agent 2>/dev/null || true
+                        elif command -v yum >/dev/null 2>&1; then yum install -y qemu-guest-agent 2>/dev/null || true
+                        elif command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-guest-agent 2>/dev/null || true
+                        fi
+                      fi
+                    fi
+                    """
+                ),
                 // Install SELinux policy tools and compile policy (only if SELinux is present)
                 .shell(
                     """

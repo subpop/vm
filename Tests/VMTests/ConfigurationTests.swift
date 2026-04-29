@@ -85,22 +85,22 @@ struct CloudInitConfigurationTests {
         let userDataYaml = String(config.userData.dropFirst("#cloud-config\n".count))
         let userData = try Yams.load(yaml: userDataYaml) as! [String: Any]
 
-        // Verify packages include qemu-guest-agent (checkpolicy installed conditionally)
-        #expect(userData["packages"] as? [String] == ["qemu-guest-agent"])
+        // qemu-guest-agent is not listed under cloud-init `packages:` (dnf fails on bootc RO); optional install is in runcmd
+        let packages = userData["packages"] as? [String]
+        #expect((packages ?? []).isEmpty)
 
-        // Verify runcmd includes conditional SELinux policy setup, service enable, and mount
+        // Verify runcmd: optional qemu-ga install, SELinux, service enable, mount
         let runcmd = userData["runcmd"] as? [String]
-        #expect(runcmd?.count == 3)
-        // First command handles SELinux conditionally
-        #expect(runcmd?[0].contains("semodule") == true)
-        #expect(runcmd?[0].contains("checkmodule") == true)
-        // Second command handles service startup with systemd
-        #expect(runcmd?[1].contains("systemctl") == true)
-        #expect(runcmd?[1].contains("daemon-reload") == true)
-        // Third command creates mount point and mounts
-        #expect(runcmd?[2].contains("mkdir -p") == true)
-        #expect(runcmd?[2].contains("/var/host/Users/defaultuser") == true)
-        #expect(runcmd?[2].contains("mount -a") == true)
+        #expect(runcmd?.count == 4)
+        #expect(runcmd?[0].contains("qemu-guest-agent") == true)
+        #expect(runcmd?[0].contains("ostree-booted") == true)
+        #expect(runcmd?[1].contains("semodule") == true)
+        #expect(runcmd?[1].contains("checkmodule") == true)
+        #expect(runcmd?[2].contains("systemctl") == true)
+        #expect(runcmd?[2].contains("daemon-reload") == true)
+        #expect(runcmd?[3].contains("mkdir -p") == true)
+        #expect(runcmd?[3].contains("/var/host/Users/defaultuser") == true)
+        #expect(runcmd?[3].contains("mount -a") == true)
 
         // Verify write_files array (snake_case key)
         let writeFiles = userData["write_files"] as! [[String: Any]]
@@ -177,10 +177,10 @@ struct CloudInitConfigurationTests {
         #expect(users[1]["name"] as? String == "extrauser")
 
         let packages = userData["packages"] as? [String]
-        #expect(packages == ["qemu-guest-agent", "jq"])
+        #expect(packages == ["jq"])
 
         let runcmd = userData["runcmd"] as? [Any]
-        #expect(runcmd?.count == 4)
+        #expect(runcmd?.count == 5)
         #expect(runcmd?.last as? String == "echo custom-command")
 
         let bootcmd = userData["bootcmd"] as? [String]
@@ -286,8 +286,8 @@ struct CloudInitConfigurationTests {
         let userDataYaml = String(config.userData.dropFirst("#cloud-config\n".count))
         let userData = try Yams.load(yaml: userDataYaml) as! [String: Any]
         let runcmd = userData["runcmd"] as? [Any]
-        #expect(runcmd?.count == 5)
-        let argvEntry = runcmd?[3] as? [String]
+        #expect(runcmd?.count == 6)
+        let argvEntry = runcmd?[4] as? [String]
         #expect(argvEntry == ["dnf", "install", "-y", "jq"])
         #expect(runcmd?.last as? String == "echo done")
     }

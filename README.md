@@ -11,7 +11,7 @@ Built with Swift and Apple's Virtualization.framework — no emulation, just nat
 - **Cloud-init Support** — Automatic VM provisioning with SSH keys and user configuration
 - **Background or Interactive** — Run VMs headless as daemons or attach to the console
 - **Sparse Disk Images** — Disk images only consume space as needed
-- **Guest Agent** — Automatic network info reporting via vsock
+- **Guest Agent** — Automatic network info reporting when `qemu-guest-agent` is present in the guest
 
 ## Requirements
 
@@ -212,7 +212,7 @@ VMs are automatically provisioned with cloud-init:
 - **SSH Keys** — Your `~/.ssh/*.pub` keys are injected for passwordless login
 - **Username** — Matches your macOS username
 - **Hostname** — Set to the VM name
-- **Guest Agent** — Installed automatically for network info reporting
+- **Guest Agent** — Enabled when `qemu-guest-agent` is present; on mutable roots it may be installed on first boot if missing. Bootc/OSTree guests should ship it in the image (cloud-init does not use `packages:` for it, avoiding `dnf` on read-only systems).
 - **Home Directory** - Automatically mounted into guest using virtiofsd
 
 You can also augment the generated cloud-init `user-data` with your own user-data file:

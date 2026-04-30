@@ -1,3 +1,12 @@
+# Changelog
+
+## 0.1.2 (2026-04-30)
+
+- 🏠 Move host home mount point from `/Users` to `/var/host`.
+- ⚙️ Conditionally install `qemu-guest-agent` when possible.
+- ☁️ Improvements to custom user-data merge strategy.
+- 📦 Makefile signing/release targets and README install updates.
+
 ## 0.1.1 (2026-04-29)
 
 - ✨ Add support for custom cloud-init user-data on create/import that merges with the base cloud-config.

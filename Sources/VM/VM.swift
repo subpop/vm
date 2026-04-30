@@ -23,7 +23,7 @@ struct VM: AsyncParsableCommand {
               
             For headless operation, omit --interactive to run in background mode.
             """,
-        version: "0.1.1",
+        version: "0.1.2",
         subcommands: [
             Create.self,
             Import.self,

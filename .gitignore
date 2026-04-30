@@ -87,3 +87,6 @@ iOSInjectionProject/
 
 # End of https://www.toptal.com/developers/gitignore/api/swift
 .swiftpm
+
+# Local release artifacts (Makefile pkg / notarize / gh release)
+dist/

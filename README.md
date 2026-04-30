@@ -16,29 +16,32 @@ Built with Swift and Apple's Virtualization.framework — no emulation, just nat
 ## Requirements
 
 - macOS 15.0 (Sequoia) or later
-- Swift 6.0+
+- **Swift 6.0+** — only if you build from source; the release `.pkg` ships a prebuilt binary
 
 ## Installation
 
-### [Mint](https://github.com/yonaskolb/mint)
+### GitHub Releases (recommended)
 
-```
-mint install subpop/vm
-```
+Download the latest **`vm-<version>.pkg`** from the [releases](https://github.com/subpop/VM/releases) page, open it, and run the installer. It installs the `vm` binary to **`/usr/local/bin`**.
 
 ### Build from Source
+
+Requires a Swift 6 toolchain and a **Developer ID Application** identity in your keychain if you use the Makefile (the `build` target signs the binary).
 
 ```bash
 git clone https://github.com/subpop/VM.git
 cd VM
-make PROFILE=release sign
+export SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+make build-release
 ```
 
-Then copy to your PATH:
+Install to your PATH (or run from `.build/release/`):
 
 ```bash
 install -m755 .build/release/vm /usr/local/bin/
 ```
+
+To compile without signing via Make, use **`swift build -c release`** and copy `.build/release/vm` yourself.
 
 ## Quick Start
 

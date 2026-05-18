@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3 (2026-05-18)
+
+- 🔒 Fixed an issue with the qemu guest agent socket and older SELinux policies.
+
 ## 0.1.2 (2026-04-30)
 
 - 🏠 Move host home mount point from `/Users` to `/var/host`.

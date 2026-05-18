@@ -110,6 +110,7 @@ struct CloudInitConfigurationTests {
         let selinuxFile = writeFiles.first { $0["path"] as? String == "/etc/selinux/qemu-vsock.te" }
         #expect(selinuxFile != nil)
         #expect((selinuxFile?["content"] as? String)?.contains("virt_qemu_ga_t") == true)
+        #expect((selinuxFile?["content"] as? String)?.contains("create") == true)
 
         // Find systemd service file
         let serviceFile = writeFiles.first {

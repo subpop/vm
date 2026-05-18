@@ -645,15 +645,23 @@ extension CloudInitConfiguration {
                 // SELinux policy to allow qemu-ga to use vsock (ignored on non-SELinux systems)
                 CloudConfig.FileInfo(
                     content: """
-                        module qemu-vsock 1.0;
+                        module qemu-vsock 1.1;
 
                         require {
                                 type virt_qemu_ga_t;
-                                class vsock_socket { accept listen };
+                                class vsock_socket {
+                                        create bind listen accept
+                                        getattr setattr read write
+                                        getopt setopt shutdown
+                                };
                         }
 
                         #============= virt_qemu_ga_t ==============
-                        allow virt_qemu_ga_t self:vsock_socket { accept listen };
+                        allow virt_qemu_ga_t self:vsock_socket {
+                                create bind listen accept
+                                getattr setattr read write
+                                getopt setopt shutdown
+                        };
                         """,
                     path: "/etc/selinux/qemu-vsock.te"),
                 // Custom systemd service for qemu-guest-agent with vsock

@@ -38,26 +38,18 @@ public struct FileLogHandler: LogHandler, @unchecked Sendable {
         self.dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     }
 
-    public func log(
-        level: Logger.Level,
-        message: Logger.Message,
-        metadata: Logger.Metadata?,
-        source: String,
-        file: String,
-        function: String,
-        line: UInt
-    ) {
+    public func log(event: LogEvent) {
         let timestamp = dateFormatter.string(from: Date())
-        let levelString = level.rawValue.uppercased().padding(
+        let levelString = event.level.rawValue.uppercased().padding(
             toLength: 7, withPad: " ", startingAt: 0)
 
         // Merge metadata
         var combinedMetadata = self.metadata
-        if let metadata = metadata {
+        if let metadata = event.metadata {
             combinedMetadata.merge(metadata) { _, new in new }
         }
 
-        var logMessage = "[\(timestamp)] [\(levelString)] [\(label)] \(message)"
+        var logMessage = "[\(timestamp)] [\(levelString)] [\(label)] \(event.message)"
 
         if !combinedMetadata.isEmpty {
             let metadataString = combinedMetadata.map { "\($0.key)=\($0.value)" }.joined(

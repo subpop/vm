@@ -146,7 +146,7 @@ struct Rescue: AsyncParsableCommand {
         print("Press Ctrl-] to detach from console\n")
 
         // Spawn daemon and attach
-        let targetDisk = vmManager.diskPath(for: name)
+        let targetDisk = try vmManager.resolvedDiskURL(for: name)
         try await spawnRescueDaemonAndAttach(
             targetDisk: targetDisk,
             manager: vmManager

@@ -159,7 +159,7 @@ public final class Runner: NSObject {
         var storageDevices: [VZStorageDeviceConfiguration] = []
 
         // Main disk
-        let diskPath = vmManager.diskPath(for: vmConfig.name)
+        let diskPath = try vmManager.resolvedDiskURL(for: vmConfig.name)
         if FileManager.default.fileExists(atPath: diskPath.path) {
             logger.debug("Attaching main disk", metadata: ["path": "\(diskPath.path)"])
             let diskAttachment = try VZDiskImageStorageDeviceAttachment(

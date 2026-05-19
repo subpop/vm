@@ -219,7 +219,7 @@ struct Start: AsyncParsableCommand {
         let config = try vmManager.loadConfiguration(for: name)
 
         // Validate disk exists
-        let diskPath = vmManager.diskPath(for: name)
+        let diskPath = try vmManager.resolvedDiskURL(for: name)
         guard FileManager.default.fileExists(atPath: diskPath.path) else {
             throw DiskError.fileNotFound(diskPath.path)
         }

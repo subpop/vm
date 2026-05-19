@@ -174,7 +174,7 @@ struct Info: AsyncParsableCommand {
 
         // Storage section
         rows.append(("Storage", ""))
-        let diskPath = vmManager.diskPath(for: name)
+        let diskPath = (try? vmManager.resolvedDiskURL(for: name)) ?? vmManager.diskPath(for: name)
         rows.append(("  Disk", diskPath.path))
         rows.append(("  Size", diskManager.formatSize(config.diskSize)))
 
@@ -184,6 +184,10 @@ struct Info: AsyncParsableCommand {
 
         if let isoPath = config.isoPath {
             rows.append(("  ISO", isoPath))
+        }
+
+        if let count = try? SnapshotManager.shared.snapshotCount(vmName: name), count > 0 {
+            rows.append(("  Snapshots", "\(count)"))
         }
 
         // Paths section
@@ -277,7 +281,7 @@ struct Info: AsyncParsableCommand {
         )
 
         // Build storage info
-        let diskPath = vmManager.diskPath(for: name)
+        let diskPath = try vmManager.resolvedDiskURL(for: name)
         let allocatedBytes = try? diskManager.getDiskSize(at: diskPath)
 
         let storageInfo = VMInfoOutput.StorageInfo(

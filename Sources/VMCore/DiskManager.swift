@@ -1,4 +1,11 @@
+import Darwin
 import Foundation
+
+/// How a file was duplicated
+public enum CloneMethod: String, Codable, Sendable {
+    case apfs
+    case copy
+}
 
 /// Errors that can occur during disk operations
 public enum DiskError: LocalizedError, Sendable {
@@ -213,6 +220,75 @@ public final class DiskManager: Sendable {
         }
 
         return url
+    }
+
+    // MARK: - APFS Cloning
+
+    /// Returns whether the volume containing `url` supports APFS file cloning
+    public func volumeSupportsCloning(at url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [.volumeSupportsFileCloningKey]) else {
+            return false
+        }
+        return values.volumeSupportsFileCloning == true
+    }
+
+    /// Clones a file using APFS copy-on-write when available, otherwise copies
+    @discardableResult
+    public func cloneFile(from source: URL, to destination: URL) throws -> CloneMethod {
+        guard fileManager.fileExists(atPath: source.path) else {
+            throw DiskError.fileNotFound(source.path)
+        }
+
+        if fileManager.fileExists(atPath: destination.path) {
+            throw DiskError.diskAlreadyExists(destination.path)
+        }
+
+        let parentDir = destination.deletingLastPathComponent()
+        if !fileManager.fileExists(atPath: parentDir.path) {
+            try fileManager.createDirectory(at: parentDir, withIntermediateDirectories: true)
+        }
+
+        let result = source.path.withCString { src in
+            destination.path.withCString { dst in
+                clonefile(src, dst, 0)
+            }
+        }
+
+        if result == 0 {
+            return .apfs
+        }
+
+        let err = errno
+        if err == EXDEV {
+            do {
+                try fileManager.copyItem(at: source, to: destination)
+            } catch {
+                throw DiskError.copyFailed(error.localizedDescription)
+            }
+            return .copy
+        }
+
+        throw DiskError.copyFailed(String(cString: strerror(err)))
+    }
+
+    /// Returns the on-disk allocated size of a file (sparse-aware)
+    public func getAllocatedSize(at path: URL) throws -> UInt64 {
+        guard fileManager.fileExists(atPath: path.path) else {
+            throw DiskError.fileNotFound(path.path)
+        }
+
+        let values = try path.resourceValues(forKeys: [
+            .totalFileAllocatedSizeKey,
+            .fileAllocatedSizeKey,
+        ])
+        if let total = values.totalFileAllocatedSize {
+            return UInt64(total)
+        }
+        if let allocated = values.fileAllocatedSize {
+            return UInt64(allocated)
+        }
+
+        return try getDiskSize(at: path)
     }
 
     // MARK: - QCOW2 Support

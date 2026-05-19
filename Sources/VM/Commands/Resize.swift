@@ -67,7 +67,7 @@ struct Resize: AsyncParsableCommand {
         }
 
         // Get disk path
-        let diskPath = vmManager.diskPath(for: name)
+        let diskPath = try vmManager.resolvedDiskURL(for: name)
 
         print("Resizing disk for VM '\(name)'...")
         print("  Current size: \(diskManager.formatSize(currentSize))")

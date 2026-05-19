@@ -11,6 +11,7 @@ Built with Swift and Apple's Virtualization.framework — no emulation, just nat
 - **Cloud-init Support** — Automatic VM provisioning with SSH keys and user configuration
 - **Background or Interactive** — Run VMs headless as daemons or attach to the console
 - **Sparse Disk Images** — Disk images only consume space as needed
+- **APFS Snapshots** — Point-in-time disk and NVRAM snapshots using copy-on-write clones
 - **Guest Agent** — Automatic network info reporting when `qemu-guest-agent` is present in the guest
 
 ## Requirements
@@ -92,6 +93,10 @@ vm start ubuntu
 | `vm info <name>` | Show detailed VM information |
 | `vm rescue <name>` | Boot into rescue environment |
 | `vm delete <name>` | Delete a VM and its files |
+| `vm snapshot create <name> [snapshot]` | Create a snapshot (VM must be stopped) |
+| `vm snapshot list <name>` | List snapshots for a VM |
+| `vm snapshot restore <name> <snapshot>` | Restore a VM from a snapshot |
+| `vm snapshot delete <name> <snapshot>` | Delete a snapshot |
 
 ### Create Options
 
@@ -116,6 +121,29 @@ vm import myvm --disk ~/existing.img --copy
 # Copy and resize
 vm import myvm --disk ~/existing.img --copy --size 128G
 ```
+
+### Snapshots
+
+Snapshots capture the VM's disk and EFI/NVRAM state. On APFS volumes, snapshots use copy-on-write clones for space efficiency — only changed blocks consume additional space.
+
+The VM must be stopped before creating, restoring, or deleting snapshots.
+
+```bash
+# Create a snapshot (name defaults to timestamp)
+vm snapshot create ubuntu
+vm snapshot create ubuntu before-upgrade --description "Before dist-upgrade"
+
+# List snapshots
+vm snapshot list ubuntu
+
+# Restore (creates a pre-restore backup by default)
+vm snapshot restore ubuntu before-upgrade
+
+# Delete a snapshot
+vm snapshot delete ubuntu before-upgrade
+```
+
+For best results, keep `~/.vm` on an APFS volume (the default on internal Mac storage). On non-APFS volumes, snapshots still work but use full file copies.
 
 ### Rescue Mode
 

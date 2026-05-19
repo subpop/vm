@@ -90,7 +90,7 @@ struct RunDaemon: AsyncParsableCommand {
         )
 
         // Validate disk exists
-        let diskPath = vmManager.diskPath(for: name)
+        let diskPath = try vmManager.resolvedDiskURL(for: name)
         guard FileManager.default.fileExists(atPath: diskPath.path) else {
             logger.error("Disk not found", metadata: ["path": "\(diskPath.path)"])
             throw DiskError.fileNotFound(diskPath.path)

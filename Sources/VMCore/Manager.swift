@@ -77,9 +77,45 @@ public final class Manager: Sendable {
         vmDirectory(for: name).appendingPathComponent("config.json")
     }
 
-    /// Returns the disk image path for a VM
+    /// Returns the disk image path for a VM (may be a symlink for in-place imports)
     public func diskPath(for name: String) -> URL {
         vmDirectory(for: name).appendingPathComponent("disk.img")
+    }
+
+    /// Returns the resolved URL of the VM's disk image, following symlinks
+    public func resolvedDiskURL(for name: String) throws -> URL {
+        let config = try loadConfiguration(for: name)
+        let diskPathString = config.diskImagePath
+        let url: URL
+        if (diskPathString as NSString).isAbsolutePath {
+            url = URL(fileURLWithPath: (diskPathString as NSString).expandingTildeInPath)
+        } else {
+            url = vmDirectory(for: name).appendingPathComponent(diskPathString)
+        }
+        return url.resolvingSymlinksInPath()
+    }
+
+    /// Returns the snapshots directory for a VM
+    public func snapshotsDirectory(for name: String) -> URL {
+        vmDirectory(for: name).appendingPathComponent("snapshots")
+    }
+
+    /// Returns the snapshot manifest path for a VM
+    public func snapshotManifestPath(for name: String) -> URL {
+        snapshotsDirectory(for: name).appendingPathComponent("snapshots.json")
+    }
+
+    /// Returns the directory for a specific snapshot
+    public func snapshotDirectory(for name: String, snapshotID: String) -> URL {
+        snapshotsDirectory(for: name).appendingPathComponent(snapshotID)
+    }
+
+    /// Throws if the VM is currently running
+    public func requireVMStopped(_ name: String) throws {
+        if getRunningPID(for: name) != nil {
+            throw ManagerError.configurationError(
+                "VM '\(name)' is currently running. Stop it first with: vm stop \(name)")
+        }
     }
 
     /// Returns the EFI variable store path for a VM

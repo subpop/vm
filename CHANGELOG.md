@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0 (2026-05-19)
+
+- 📷 Add support for taking snapshots of guests
+- 📝 Addressed a deprecation on a swift-log function
+
 ## 0.1.3 (2026-05-18)
 
 - 🔒 Fixed an issue with the qemu guest agent socket and older SELinux policies.
